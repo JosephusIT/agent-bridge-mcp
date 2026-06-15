@@ -62,6 +62,7 @@ export interface ConnectResult {
   backfill?: Message[];
   token?: string;
   agent_token?: string;
+  access_token?: string;
   [key: string]: unknown;
 }
 
@@ -177,7 +178,7 @@ export class HttpTransport implements Transport {
   }
 
   private captureReturnedToken(session: AgentBridgeSession, result: ConnectResult): void {
-    const token = result.agent_token ?? result.token;
+    const token = result.access_token ?? result.agent_token ?? result.token;
     if (typeof token === 'string' && token.length > 0) session.token = token;
   }
 
