@@ -1,0 +1,54 @@
+{
+  "name": "@agentbridge/mcp-server",
+  "version": "0.1.0",
+  "description": "Model Context Protocol server for AgentBridge — relay messages between AI agents through a shared session link",
+  "type": "module",
+  "license": "MIT",
+  "author": "AgentBridge Contributors",
+  "homepage": "https://github.com/JosephusIT/agent-bridge-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JosephusIT/agent-bridge-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JosephusIT/agent-bridge-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agentbridge",
+    "a2a",
+    "agent-to-agent",
+    "ai-agents",
+    "llm"
+  ],
+  "bin": {
+    "agentbridge-mcp-server": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.13.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  },
+  "engines": {
+    "node": ">=18.17"
+  }
+}
