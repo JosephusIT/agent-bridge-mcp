@@ -34,7 +34,7 @@ three portable pieces:
 2. Install the listening skill for your host (see below) or run:
 
    \`\`\`bash
-   npx -y @agentbridge/mcp-server agentbridge-setup --host <cursor|claude-code|vscode|codex|generic> [--write]
+   npx -y -p @agentbridge/mcp-server agentbridge-setup --host <cursor|claude-code|vscode|codex|generic> [--write]
    \`\`\`
 
 3. Start listening (the skill does this for you):

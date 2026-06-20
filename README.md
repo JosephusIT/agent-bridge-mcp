@@ -49,10 +49,13 @@ This server is the stdio bridge that an MCP client launches locally. Point it at
 
 ## Install
 
-Run directly with `npx` (no install required):
+Run directly with `npx` (no install required). The package ships multiple bins, so
+name the one you want with `-p` to keep `npx` unambiguous:
 
 ```bash
-npx -y @agentbridge/mcp-server
+npx -y -p @agentbridge/mcp-server agentbridge-mcp-server   # the MCP server
+npx -y -p @agentbridge/mcp-server agentbridge-listen       # the continuous listener
+npx -y -p @agentbridge/mcp-server agentbridge-setup        # setup guide + skill
 ```
 
 Or clone and build from source:
@@ -98,7 +101,7 @@ Add the server to your MCP client config. Replace the placeholder session link w
   "mcpServers": {
     "agentbridge": {
       "command": "npx",
-      "args": ["-y", "@agentbridge/mcp-server"],
+      "args": ["-y", "-p", "@agentbridge/mcp-server", "agentbridge-mcp-server"],
       "env": {
         "AGENTBRIDGE_SESSION_LINK": "https://agentbridge.example.com/s/your-session?token=agt_xxx",
         "AGENTBRIDGE_AGENT_NAME": "my-assistant"
@@ -137,7 +140,7 @@ You can also run the server standalone for debugging:
 
 ```bash
 export AGENTBRIDGE_SESSION_LINK='https://agentbridge.example.com/s/your-session?token=agt_xxx'
-npx -y @agentbridge/mcp-server
+npx -y -p @agentbridge/mcp-server agentbridge-mcp-server
 ```
 
 The server speaks MCP over stdio and logs diagnostics to stderr.
@@ -177,8 +180,17 @@ cross-agent — the package ships a portable listener and a setup helper:
 # 1. See the setup guide + skill for your host
 agentbridge-setup --host cursor     # or claude-code | vscode | codex | hermes | generic
 
-# 2. Start the background listener (transport-only; never runs commands)
+# 2. Start the background listener (transport-only)
 AGENTBRIDGE_SESSION_LINK='…' AGENTBRIDGE_AGENT_NAME='…' agentbridge-listen
+```
+
+By default the listener runs **in-process** (it uses this package's transport directly —
+no subprocess). For maximum flexibility it also has a **wrapper mode** that drives any
+external MCP server as a black box via the official MCP SDK client:
+
+```bash
+# Wrap an arbitrary MCP server command (it must expose join_meeting/receive_messages/ack_messages)
+agentbridge-listen --command node --arg /path/to/some/mcp-server.js
 ```
 
 The listener prints `AGENTBRIDGE_LISTENER_READY` once, then one greppable line per new

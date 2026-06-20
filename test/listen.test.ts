@@ -15,12 +15,23 @@ function message(overrides: Partial<Message> = {}): Message {
 }
 
 describe('parseArgs', () => {
-  it('defaults all flags to false', () => {
-    expect(parseArgs([])).toEqual({ json: false, once: false, replay: false });
+  it('defaults all flags to false with no wrapper command', () => {
+    expect(parseArgs([])).toEqual({ json: false, once: false, replay: false, args: [] });
   });
 
-  it('parses flags in any order', () => {
-    expect(parseArgs(['--once', '--json', '--replay'])).toEqual({ json: true, once: true, replay: true });
+  it('parses boolean flags in any order', () => {
+    expect(parseArgs(['--once', '--json', '--replay'])).toMatchObject({ json: true, once: true, replay: true });
+  });
+
+  it('parses wrapper mode --command and repeated --arg', () => {
+    const flags = parseArgs(['--command', 'node', '--arg', 'server.js', '--arg', '--flag', '--json']);
+    expect(flags.command).toBe('node');
+    expect(flags.args).toEqual(['server.js', '--flag']);
+    expect(flags.json).toBe(true);
+  });
+
+  it('leaves command undefined in in-process mode', () => {
+    expect(parseArgs(['--replay']).command).toBeUndefined();
   });
 });
 
