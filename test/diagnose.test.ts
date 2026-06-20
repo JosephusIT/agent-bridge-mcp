@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { runDiagnostics, summarizeDiagnostics, type DiagnoseDeps } from '../src/diagnose.js';
-import type { AgentBridgeSession, ConnectResult } from '../src/transport.js';
+import type { AgentBridgeSession } from '../src/transport.js';
 
 const session: AgentBridgeSession = {
   baseUrl: 'https://relay.example.com',
@@ -14,7 +14,7 @@ const session: AgentBridgeSession = {
 function deps(overrides: Partial<DiagnoseDeps> = {}): DiagnoseDeps {
   return {
     session,
-    connect: async () => ({ status: 'active', agent: { id: 'a1', name: 'tester', status: 'active' } }) as ConnectResult,
+    connect: async () => ({ status: 'active', agent: { id: 'a1', name: 'tester', status: 'active' } }),
     listAgents: async () => [{ id: 'a1', name: 'tester', status: 'active' }],
     getSessionInfo: async () => ({ slug: 'demo', name: 'Demo', join_mode: 'token' }),
     ...overrides,

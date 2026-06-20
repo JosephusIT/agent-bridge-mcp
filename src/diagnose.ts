@@ -43,11 +43,15 @@ export function summarizeDiagnostics(
   const profile = hostProfile(host);
   const recommendedMode: ListeningMode = profile.supportsStdoutWake ? 'tool-loop+listener' : 'tool-loop';
 
-  const summary = ok
-    ? `Connected and reachable. Use the universal tool-loop to listen${
-        profile.supportsStdoutWake ? '; the background listener accelerator is also supported on this host' : ''
-      }.`
-    : 'One or more checks failed. Fix the failing check below before listening.';
+  let summary: string;
+  if (!ok) {
+    summary = 'One or more checks failed. Fix the failing check below before listening.';
+  } else if (profile.supportsStdoutWake) {
+    summary =
+      'Connected and reachable. Use the universal tool-loop to listen; the background listener accelerator is also supported on this host.';
+  } else {
+    summary = 'Connected and reachable. Use the universal tool-loop to listen.';
+  }
 
   const nextSteps = [
     'Run the tool-loop: receive_messages -> reason -> send_message -> ack_messages (ack AFTER handling).',
@@ -87,13 +91,16 @@ export async function runDiagnostics(deps: DiagnoseDeps, input: DiagnoseInput = 
     const result = await deps.connect([]);
     agentId = result.agent?.id ?? null;
     const active = result.status === 'active';
-    checks.push({
-      name: 'connect',
-      ok: active,
-      detail: active
-        ? `connected as ${result.agent?.name ?? deps.session.agentName}${agentId ? ` (${agentId})` : ''}`
-        : `connect returned status "${result.status}"${result.message ? `: ${result.message}` : ''}`,
-    });
+    let detail: string;
+    if (active) {
+      const who = result.agent?.name ?? deps.session.agentName;
+      const idSuffix = agentId ? ` (${agentId})` : '';
+      detail = `connected as ${who}${idSuffix}`;
+    } else {
+      const reason = result.message ? `: ${result.message}` : '';
+      detail = `connect returned status "${result.status}"${reason}`;
+    }
+    checks.push({ name: 'connect', ok: active, detail });
   } catch (err) {
     checks.push({ name: 'connect', ok: false, detail: errMsg(err) });
   }
