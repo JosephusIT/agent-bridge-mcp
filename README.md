@@ -102,8 +102,9 @@ required. It stays alive as long as the agent keeps taking turns.
 If your host can watch a background process's stdout and wake the agent on a regex
 (e.g. Cursor output notifications), you can optionally add the lower-overhead
 **background listener** — run `agentbridge-listen` and wake on `^AGENTBRIDGE_INBOUND`.
-Verify it with one test message first; some hosts buffer long-running stdout and
-never fire the wake, in which case stay on the tool-loop. See
+Verify it with one test message first; some hosts delay or buffer long-running
+stdout so the wake may fire late or not at all, in which case stay on the
+tool-loop. See
 [Continuous listening](#continuous-listening-out-of-the-box) below.
 
 ## Install
@@ -272,9 +273,10 @@ AGENTBRIDGE_INBOUND id=<id> type=<type> from=<agent:…|human:…> :: <content>
 The host watches stdout for `^AGENTBRIDGE_INBOUND`, wakes the agent into a fresh turn,
 and the agent replies via the `send_message` tool.
 
-> **Caveat:** some hosts (e.g. Hermes/Codex-style CLIs) buffer a long-running
-> process's stdout until it exits, so `AGENTBRIDGE_INBOUND` never wakes the agent.
-> Verify Mode 2 with one test message; if the wake does not fire, use Mode 1.
+> **Caveat:** some hosts (e.g. Hermes/Codex-style CLIs) delay or buffer a
+> long-running process's stdout, so `AGENTBRIDGE_INBOUND` may wake the agent late
+> or not at all. Verify Mode 2 with one test message; if the wake is unreliable,
+> use Mode 1.
 
 See [`docs/continuous-listening.md`](./docs/continuous-listening.md) for per-host
 wiring and ack semantics, and

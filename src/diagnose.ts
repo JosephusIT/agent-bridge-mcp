@@ -10,7 +10,7 @@
  */
 
 import { hostProfile } from './guide.js';
-import type { Agent, AgentBridgeSession, ConnectResult, SessionInfo, Transport } from './transport.js';
+import { AgentBridgeApiError, type Agent, type AgentBridgeSession, type ConnectResult, type SessionInfo, type Transport } from './transport.js';
 
 export interface DiagnosticsCheck {
   name: string;
@@ -62,7 +62,7 @@ export function summarizeDiagnostics(
     );
   } else {
     nextSteps.push(
-      `Skip the stdout listener on this host (${host}): it buffers long-running stdout, so the wake is unreliable.`
+      `On this host (${host}), prefer the tool-loop: background stdout wake may be delayed or unreliable. Only enable the listener after a successful live test.`
     );
   }
   nextSteps.push('Always ask the user before running any shell command.');
@@ -81,50 +81,76 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Run the live diagnostics against the relay and assemble a full report. */
-export async function runDiagnostics(deps: DiagnoseDeps, input: DiagnoseInput = {}): Promise<DiagnosticsReport> {
-  const host = (input.host ?? 'generic').toLowerCase();
-  const checks: DiagnosticsCheck[] = [];
-  let agentId: string | null = null;
+const AUTH_HINT =
+  'Authentication failed: the session link/token looks already used, bound to another agent, or expired. Request a fresh AgentBridge link/token (or restart with a persisted returned agent token), then re-run diagnostics.';
 
+/** A connect failure whose HTTP status means the token can't authenticate. */
+function isAuthFailure(err: unknown): boolean {
+  return err instanceof AgentBridgeApiError && (err.status === 401 || err.status === 403 || err.status === 409);
+}
+
+function connectDetail(result: ConnectResult, agentName: string, agentId: string | null): string {
+  if (result.status === 'active') {
+    const who = result.agent?.name ?? agentName;
+    const idSuffix = agentId ? ` (${agentId})` : '';
+    return `connected as ${who}${idSuffix}`;
+  }
+  const reason = result.message ? `: ${result.message}` : '';
+  return `connect returned status "${result.status}"${reason}`;
+}
+
+/** Run the connect check. Returns the agent id and whether auth is blocked. */
+async function runConnectCheck(deps: DiagnoseDeps, checks: DiagnosticsCheck[]): Promise<{ agentId: string | null; authBlocked: boolean }> {
   try {
     const result = await deps.connect([]);
-    agentId = result.agent?.id ?? null;
+    const agentId = result.agent?.id ?? null;
     const active = result.status === 'active';
-    let detail: string;
-    if (active) {
-      const who = result.agent?.name ?? deps.session.agentName;
-      const idSuffix = agentId ? ` (${agentId})` : '';
-      detail = `connected as ${who}${idSuffix}`;
-    } else {
-      const reason = result.message ? `: ${result.message}` : '';
-      detail = `connect returned status "${result.status}"${reason}`;
-    }
-    checks.push({ name: 'connect', ok: active, detail });
+    checks.push({ name: 'connect', ok: active, detail: connectDetail(result, deps.session.agentName, agentId) });
+    return { agentId, authBlocked: false };
   } catch (err) {
-    checks.push({ name: 'connect', ok: false, detail: errMsg(err) });
+    const authBlocked = isAuthFailure(err);
+    const detail = authBlocked ? `${errMsg(err)} — ${AUTH_HINT}` : errMsg(err);
+    checks.push({ name: 'connect', ok: false, detail });
+    return { agentId: null, authBlocked };
   }
+}
 
+async function runSessionCheck(deps: DiagnoseDeps, checks: DiagnosticsCheck[]): Promise<void> {
   try {
     const info = await deps.getSessionInfo(deps.session);
     const closed = Boolean(info.closed_at);
-    checks.push({
-      name: 'session',
-      ok: !closed,
-      detail: closed ? `session "${info.slug}" is closed` : `session "${info.name ?? info.slug}" (join_mode=${info.join_mode})`,
-    });
+    const detail = closed ? `session "${info.slug}" is closed` : `session "${info.name ?? info.slug}" (join_mode=${info.join_mode})`;
+    checks.push({ name: 'session', ok: !closed, detail });
   } catch (err) {
     checks.push({ name: 'session', ok: false, detail: errMsg(err) });
   }
+}
 
+async function runAgentsCheck(deps: DiagnoseDeps, checks: DiagnosticsCheck[]): Promise<void> {
   try {
     const agents = await deps.listAgents(deps.session);
     checks.push({ name: 'agents', ok: true, detail: `${agents.length} agent(s) visible` });
   } catch (err) {
     checks.push({ name: 'agents', ok: false, detail: errMsg(err) });
   }
+}
+
+/** Run the live diagnostics against the relay and assemble a full report. */
+export async function runDiagnostics(deps: DiagnoseDeps, input: DiagnoseInput = {}): Promise<DiagnosticsReport> {
+  const host = (input.host ?? 'generic').toLowerCase();
+  const checks: DiagnosticsCheck[] = [];
+
+  const { agentId, authBlocked } = await runConnectCheck(deps, checks);
+
+  // Skip dependent checks when connect can't authenticate — they would only
+  // produce noisy 401s and obscure the real (token) problem.
+  if (!authBlocked) {
+    await runSessionCheck(deps, checks);
+    await runAgentsCheck(deps, checks);
+  }
 
   const verdict = summarizeDiagnostics(checks, host);
+  if (authBlocked) verdict.nextSteps.unshift(AUTH_HINT);
   return { ...verdict, agentName: deps.session.agentName, agentId, checks };
 }
 

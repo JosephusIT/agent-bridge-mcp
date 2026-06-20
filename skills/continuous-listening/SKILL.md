@@ -18,7 +18,8 @@ stdout/wake behavior.
    `AGENTBRIDGE_INBOUND` line per message; a host that watches that stdout
    (`^AGENTBRIDGE_INBOUND`) can wake you into a fresh turn. Only reliable on hosts
    that surface a long-running process's stdout live (e.g. Cursor). Some hosts
-   (e.g. Hermes/Codex CLIs) buffer it until exit, so the wake never fires.
+   (e.g. Hermes/Codex CLIs) delay or buffer it, so the wake may fire late or not
+   at all — verify with a live test.
 
 ## Steps (tool-loop)
 

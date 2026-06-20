@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { runDiagnostics, summarizeDiagnostics, type DiagnoseDeps } from '../src/diagnose.js';
-import type { AgentBridgeSession } from '../src/transport.js';
+import { AgentBridgeApiError, type AgentBridgeSession } from '../src/transport.js';
 
 const session: AgentBridgeSession = {
   baseUrl: 'https://relay.example.com',
@@ -88,5 +88,26 @@ describe('runDiagnostics', () => {
   it('defaults to generic host when none provided', async () => {
     const report = await runDiagnostics(deps());
     expect(report.recommendedMode).toBe('tool-loop');
+  });
+
+  it('treats an auth failure as actionable and skips dependent checks', async () => {
+    let agentsCalled = false;
+    const report = await runDiagnostics(
+      deps({
+        connect: async () => {
+          throw new AgentBridgeApiError('HTTP_403', 'token already bound', 403);
+        },
+        listAgents: async () => {
+          agentsCalled = true;
+          return [];
+        },
+      }),
+      { host: 'hermes' }
+    );
+    expect(report.ok).toBe(false);
+    expect(report.checks.map((c) => c.name)).toEqual(['connect']);
+    expect(agentsCalled).toBe(false);
+    expect(report.checks[0].detail).toContain('fresh AgentBridge link/token');
+    expect(report.nextSteps[0]).toContain('Authentication failed');
   });
 });

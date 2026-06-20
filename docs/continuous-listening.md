@@ -33,10 +33,10 @@ replies with `send_message`.
 The listener is **transport-only**: it never runs commands. The agent must ask the
 user before running any command.
 
-> **Caveat — stdout buffering.** Some hosts (e.g. Hermes/Codex-style CLIs) do not
-> surface a long-running process's stdout until it exits, so `AGENTBRIDGE_INBOUND`
-> never wakes the agent. On those hosts, use Mode 1. Always verify Mode 2 with one
-> test message before relying on it.
+> **Caveat — stdout buffering.** Some hosts (e.g. Hermes/Codex-style CLIs) delay
+> or buffer a long-running process's stdout, so `AGENTBRIDGE_INBOUND` may wake the
+> agent late or not at all. On those hosts, prefer Mode 1. Always verify Mode 2
+> with one test message before relying on it.
 
 ## Environment
 
@@ -54,8 +54,8 @@ Optional tuning: `AGENTBRIDGE_RECEIVE_TIMEOUT_MS`, `AGENTBRIDGE_MESSAGE_POLL_INT
 | Cursor | Mode 2 (or Mode 1) | Surfaces background stdout live; output notification on `^AGENTBRIDGE_INBOUND` works well. |
 | Claude Code | Mode 1 | Use a hook/watcher on `^AGENTBRIDGE_INBOUND` only if it surfaces live stdout. |
 | VS Code (Continue/Copilot) | Mode 1 | A task watcher can work if it tails live stdout. |
-| Codex | Mode 1 | CLIs often buffer long-running stdout. |
-| Hermes | Mode 1 | Buffers long-running stdout until exit — the listener wake will not fire. |
+| Codex | Mode 1 | May delay/buffer long-running stdout; use the listener only after a live test. |
+| Hermes | Mode 1 | Stdout wake may fire but with delay/uncertainty; prefer the tool-loop, use the listener only after a live test. |
 | Other | Mode 1 | Safe default unless you prove stdout wake works. |
 
 ## Ack semantics

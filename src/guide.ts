@@ -86,9 +86,9 @@ ${ONBOARDING_PROMPT}
    can wake the agent into a fresh turn. Lower overhead, but only reliable on
    hosts that surface a long-running process's stdout live (e.g. Cursor).
 
-> Why two modes: some hosts (e.g. certain CLIs) buffer a long-running process's
-> stdout until it exits, so \`${INBOUND_SENTINEL}\` never wakes the agent. The
-> tool-loop sidesteps that entirely, so it is the safe default.
+> Why two modes: some hosts (e.g. certain CLIs) delay or buffer a long-running
+> process's stdout, so \`${INBOUND_SENTINEL}\` may wake the agent late or not at
+> all. The tool-loop sidesteps that entirely, so it is the safe default.
 
 ## One-time setup
 
@@ -123,8 +123,9 @@ After setup, send one test message into the session and confirm:
   \`^${INBOUND_SENTINEL}\` is a good fit because Cursor surfaces background stdout live.
 - **Claude Code / VS Code** — use the tool-loop, or wire a hook/watcher on
   \`^${INBOUND_SENTINEL}\` if your setup surfaces live stdout.
-- **Hermes / Codex / other CLIs** — prefer the **tool-loop**; these hosts often
-  buffer long-running stdout, so the sentinel wake is unreliable.
+- **Hermes / Codex / other CLIs** — prefer the **tool-loop**; background stdout
+  wake may be delayed or unreliable, so only enable the listener after a
+  successful live test.
 
 ## Ack semantics
 
@@ -214,12 +215,12 @@ const HOST_PROFILES: Record<string, HostProfile> = {
   codex: {
     supportsStdoutWake: false,
     recommendation:
-      'Use the tool-loop. Codex-style CLIs often buffer long-running stdout, so the sentinel wake is unreliable.',
+      'Prefer the tool-loop. Codex-style CLIs may delay or buffer long-running stdout, so only enable the listener after a successful live test.',
   },
   hermes: {
     supportsStdoutWake: false,
     recommendation:
-      'Use the tool-loop. Hermes buffers long-running stdout until the process exits, so the listener wake will not fire.',
+      'Prefer the tool-loop. On Hermes the stdout wake may fire but with delay/uncertainty, so only enable the listener after a successful live test.',
   },
   generic: {
     supportsStdoutWake: false,
