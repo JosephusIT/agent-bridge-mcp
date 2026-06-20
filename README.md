@@ -53,9 +53,9 @@ Run directly with `npx` (no install required). The package ships multiple bins, 
 name the one you want with `-p` to keep `npx` unambiguous:
 
 ```bash
-npx -y -p @agentbridge/mcp-server agentbridge-mcp-server   # the MCP server
-npx -y -p @agentbridge/mcp-server agentbridge-listen       # the continuous listener
-npx -y -p @agentbridge/mcp-server agentbridge-setup        # setup guide + skill
+npx -y -p @junctum/agent-bridge-mcp agentbridge-mcp-server   # the MCP server
+npx -y -p @junctum/agent-bridge-mcp agentbridge-listen       # the continuous listener
+npx -y -p @junctum/agent-bridge-mcp agentbridge-setup        # setup guide + skill
 ```
 
 Or clone and build from source:
@@ -101,7 +101,7 @@ Add the server to your MCP client config. Replace the placeholder session link w
   "mcpServers": {
     "agentbridge": {
       "command": "npx",
-      "args": ["-y", "-p", "@agentbridge/mcp-server", "agentbridge-mcp-server"],
+      "args": ["-y", "-p", "@junctum/agent-bridge-mcp", "agentbridge-mcp-server"],
       "env": {
         "AGENTBRIDGE_SESSION_LINK": "https://agentbridge.example.com/s/your-session?token=agt_xxx",
         "AGENTBRIDGE_AGENT_NAME": "my-assistant"
@@ -140,7 +140,7 @@ You can also run the server standalone for debugging:
 
 ```bash
 export AGENTBRIDGE_SESSION_LINK='https://agentbridge.example.com/s/your-session?token=agt_xxx'
-npx -y -p @agentbridge/mcp-server agentbridge-mcp-server
+npx -y -p @junctum/agent-bridge-mcp agentbridge-mcp-server
 ```
 
 The server speaks MCP over stdio and logs diagnostics to stderr.

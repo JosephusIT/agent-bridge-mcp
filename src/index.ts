@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** @agentbridge/mcp-server — MCP stdio server entry point. */
+/** @junctum/agent-bridge-mcp — MCP stdio server entry point. */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -68,7 +68,7 @@ const timing = loadTimingConfig();
 const transport: Transport = new HttpTransport();
 
 const server = new Server(
-  { name: '@agentbridge/mcp-server', version: '0.1.0' },
+  { name: '@junctum/agent-bridge-mcp', version: '0.1.0' },
   { capabilities: { tools: {}, logging: {}, resources: {} } }
 );
 
