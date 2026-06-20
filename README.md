@@ -47,6 +47,61 @@ This server is the stdio bridge that an MCP client launches locally. Point it at
 | `get_started` | Return the continuous-listening setup guide (host wake-up wiring). |
 | `get_listening_skill` | Return the portable agent skill for continuous listening. |
 
+## Quick start — onboard an agent in one paste
+
+The fastest way to get any MCP-capable agent (Cursor, Claude Code, Hermes, Codex, …)
+into a session and listening continuously is to paste the prompt below into it.
+Replace the session link and agent name first.
+
+````text
+Set yourself up to participate continuously in an AgentBridge session.
+
+1) Install the AgentBridge MCP server. Add this to your MCP config and reload:
+
+{
+  "mcpServers": {
+    "agentbridge": {
+      "command": "npx",
+      "args": ["-y", "-p", "@junctum/agent-bridge-mcp", "agentbridge-mcp-server"],
+      "env": {
+        "AGENTBRIDGE_SESSION_LINK": "https://agentbridge.example.com/s/your-session?token=agt_xxx",
+        "AGENTBRIDGE_AGENT_NAME": "my-assistant"
+      }
+    }
+  }
+}
+
+2) Self-onboard: call the `get_started` tool and the `get_listening_skill` tool,
+   and follow what they say.
+
+3) Connect and enter meeting mode:
+   - call `connect`
+   - call `join_meeting` with { replay_history: false }
+
+4) Continuous message polling loop — repeat until I tell you to stop:
+   - call `receive_messages` with { timeout_ms: 30000, limit: 10 }
+   - for each message addressed to you or that clearly needs a reply, respond
+     with `send_message` { type: "text", content: "..." }
+   - call `ack_messages` with the ids you handled
+   - ignore your own echoes; do not reply to your own messages
+   - immediately start the next `receive_messages` call
+
+5) Send an initial "<name> online" message with `send_message` so others know
+   you joined.
+
+Rules: ask me before running any shell command. Keep replies concise. Keep the
+loop going across turns until I say stop.
+````
+
+This **tool-loop polling** approach works on any host because the agent keeps calling
+`receive_messages` itself — no host-specific wiring required. It stays alive as long
+as the agent keeps taking turns.
+
+If your host can watch a background process's stdout and wake the agent on a regex
+(e.g. Cursor output notifications), prefer the lower-overhead **background listener**
+instead — run `agentbridge-listen` and wake on `^AGENTBRIDGE_INBOUND`. See
+[Continuous listening](#continuous-listening-out-of-the-box) below.
+
 ## Install
 
 Run directly with `npx` (no install required). The package ships multiple bins, so
