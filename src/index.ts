@@ -1,14 +1,21 @@
 #!/usr/bin/env node
-/** @agentbridge/mcp-server — MCP stdio server entry point. */
+/** @junctum/agent-bridge-mcp — MCP stdio server entry point. */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
-import { parseSessionLink } from './link-parser.js';
+import { loadSessionFromEnv, loadTimingConfig } from './config.js';
+import { makeConnectAndAwaitApproval } from './connect.js';
+import { LISTENING_SKILL, SETUP_GUIDE } from './guide.js';
 import { createMeetingInboxOptions, MeetingInbox } from './meeting-inbox.js';
-import type { AgentBridgeSession, ConnectResult, Transport } from './transport.js';
+import type { AgentBridgeSession, Transport } from './transport.js';
 import { HttpTransport } from './transport.js';
 
 const ConnectSchema = z.object({
@@ -48,35 +55,21 @@ const PollOnceSchema = z.object({
 
 const EmptySchema = z.object({}).passthrough();
 
-const SESSION_LINK = process.env.AGENTBRIDGE_SESSION_LINK;
-if (!SESSION_LINK) {
-  console.error('[agentbridge-mcp-server] AGENTBRIDGE_SESSION_LINK is not set.');
-  process.exit(1);
-}
-
-let parsedLink: ReturnType<typeof parseSessionLink>;
+let session: AgentBridgeSession;
 try {
-  parsedLink = parseSessionLink(SESSION_LINK);
+  session = loadSessionFromEnv();
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
-  console.error(`[agentbridge-mcp-server] Invalid session link: ${message}`);
+  console.error(`[agentbridge-mcp-server] ${message}`);
   process.exit(1);
 }
 
-const session: AgentBridgeSession = {
-  baseUrl: parsedLink.baseUrl,
-  apiBaseUrl: parsedLink.apiBaseUrl,
-  slug: parsedLink.slug,
-  sessionId: parsedLink.slug,
-  agentName: process.env.AGENTBRIDGE_AGENT_NAME ?? 'agentbridge-agent',
-  token: parsedLink.token,
-};
-
+const timing = loadTimingConfig();
 const transport: Transport = new HttpTransport();
 
 const server = new Server(
-  { name: '@agentbridge/mcp-server', version: '0.1.0' },
-  { capabilities: { tools: {}, logging: {} } }
+  { name: '@junctum/agent-bridge-mcp', version: '0.1.0' },
+  { capabilities: { tools: {}, logging: {}, resources: {} } }
 );
 
 function toolText(value: unknown) {
@@ -88,21 +81,19 @@ function toolError(err: unknown) {
   return { content: [{ type: 'text' as const, text: message }], isError: true };
 }
 
-function getNumberEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
+const connectAndAwaitApproval = makeConnectAndAwaitApproval(session, transport, {
+  connectTimeoutMs: timing.connectTimeoutMs,
+  approvalPollIntervalMs: timing.approvalPollIntervalMs,
+});
 
 const meetingInbox = new MeetingInbox(
   session,
   transport,
   connectAndAwaitApproval,
   createMeetingInboxOptions({
-    pollIntervalMs: getNumberEnv('AGENTBRIDGE_MESSAGE_POLL_INTERVAL_MS', 3_000),
-    inboxMaxMessages: getNumberEnv('AGENTBRIDGE_INBOX_MAX_MESSAGES', 500),
-    defaultReceiveTimeoutMs: getNumberEnv('AGENTBRIDGE_RECEIVE_TIMEOUT_MS', 30_000),
+    pollIntervalMs: timing.messagePollIntervalMs,
+    inboxMaxMessages: timing.inboxMaxMessages,
+    defaultReceiveTimeoutMs: timing.defaultReceiveTimeoutMs,
     notify: async (event) => {
       await server.sendLoggingMessage({
         level: 'info',
@@ -117,36 +108,6 @@ const meetingInbox = new MeetingInbox(
     },
   })
 );
-
-async function connectAndAwaitApproval(capabilities: string[]): Promise<ConnectResult> {
-  const initial = await transport.connect(session, { capabilities });
-  if (initial.status === 'active') return initial;
-  if (initial.status !== 'pending' || !initial.knock_id) return initial;
-
-  const timeoutMs = getNumberEnv('AGENTBRIDGE_CONNECT_TIMEOUT_MS', 300_000);
-  const intervalMs = getNumberEnv('AGENTBRIDGE_POLL_INTERVAL_MS', 3_000);
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-    const knock = await transport.getKnock(session, initial.knock_id);
-    const status = typeof knock.status === 'string' ? knock.status : 'pending';
-    if (status === 'approved') {
-      if (knock.agent || knock.session || knock.backfill) {
-        return { status: 'active', ...knock };
-      }
-      return transport.connect(session, { capabilities });
-    }
-    if (status === 'denied') {
-      throw new Error('JOIN_DENIED: Session owner denied this agent. Ask the owner to approve a new knock or generate a pre-auth link.');
-    }
-    if (status === 'expired') {
-      throw new Error('JOIN_EXPIRED: Approval knock expired. Run connect again or request a pre-auth link.');
-    }
-  }
-
-  throw new Error('JOIN_TIMEOUT: Timed out waiting for session owner approval. Try again or ask the owner to approve the knock.');
-}
 
 server.setRequestHandler(ListToolsRequestSchema, () => ({
   tools: [
@@ -249,8 +210,47 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
     },
     { name: 'list_agents', description: 'List agents visible in the current session.', inputSchema: { type: 'object', properties: {}, required: [] } },
     { name: 'get_session_info', description: 'Get session metadata and caller permissions.', inputSchema: { type: 'object', properties: {}, required: [] } },
+    {
+      name: 'get_started',
+      description: 'Return the continuous-listening setup guide: how to make this agent auto-respond to new session messages, with host wake-up wiring (Cursor, Claude Code, VS Code, Codex, etc.).',
+      inputSchema: { type: 'object', properties: {}, required: [] },
+    },
+    {
+      name: 'get_listening_skill',
+      description: 'Return the portable agent skill for AgentBridge continuous listening (listen -> wake -> reply), including the rule to ask the user before running any command.',
+      inputSchema: { type: 'object', properties: {}, required: [] },
+    },
   ],
 }));
+
+const RESOURCES = [
+  {
+    uri: 'agentbridge://guide/continuous-listening',
+    name: 'AgentBridge continuous-listening setup guide',
+    description: 'How to set up out-of-the-box continuous listening across hosts.',
+    mimeType: 'text/markdown',
+    text: SETUP_GUIDE,
+  },
+  {
+    uri: 'agentbridge://skill/continuous-listening',
+    name: 'AgentBridge continuous-listening skill',
+    description: 'Portable agent skill: listen, wake, reply; ask before running commands.',
+    mimeType: 'text/markdown',
+    text: LISTENING_SKILL,
+  },
+];
+
+server.setRequestHandler(ListResourcesRequestSchema, () => ({
+  resources: RESOURCES.map(({ uri, name, description, mimeType }) => ({ uri, name, description, mimeType })),
+}));
+
+server.setRequestHandler(ReadResourceRequestSchema, (request) => {
+  const match = RESOURCES.find((resource) => resource.uri === request.params.uri);
+  if (!match) {
+    throw new Error(`UNKNOWN_RESOURCE: ${request.params.uri}`);
+  }
+  return { contents: [{ uri: match.uri, mimeType: match.mimeType, text: match.text }] };
+});
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
@@ -299,6 +299,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'get_session_info':
         EmptySchema.parse(args ?? {});
         return toolText(await transport.getSessionInfo(session));
+      case 'get_started':
+        EmptySchema.parse(args ?? {});
+        return { content: [{ type: 'text' as const, text: SETUP_GUIDE }] };
+      case 'get_listening_skill':
+        EmptySchema.parse(args ?? {});
+        return { content: [{ type: 'text' as const, text: LISTENING_SKILL }] };
       default:
         return { content: [{ type: 'text' as const, text: `UNKNOWN_TOOL: Unknown tool: ${name}` }], isError: true };
     }

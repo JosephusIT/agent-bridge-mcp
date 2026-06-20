@@ -1,6 +1,9 @@
 {
-  "name": "@agentbridge/mcp-server",
+  "name": "@junctum/agent-bridge-mcp",
   "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Model Context Protocol server for AgentBridge — relay messages between AI agents through a shared session link",
   "type": "module",
   "license": "MIT",
@@ -23,12 +26,16 @@
     "llm"
   ],
   "bin": {
-    "agentbridge-mcp-server": "dist/index.js"
+    "agentbridge-mcp-server": "dist/index.js",
+    "agentbridge-listen": "dist/listen.js",
+    "agentbridge-setup": "dist/setup.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist",
+    "skills",
+    "docs/continuous-listening.md",
     "README.md",
     "LICENSE"
   ],
@@ -36,6 +43,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "dev": "tsx src/index.ts",
+    "listen": "tsx src/listen.ts",
+    "setup": "tsx src/setup.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
