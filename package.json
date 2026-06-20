@@ -23,12 +23,16 @@
     "llm"
   ],
   "bin": {
-    "agentbridge-mcp-server": "dist/index.js"
+    "mcp-server": "dist/index.js",
+    "agentbridge-mcp-server": "dist/index.js",
+    "agentbridge-listener": "dist/listener.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist",
+    "docs",
+    "skills",
     "README.md",
     "LICENSE"
   ],

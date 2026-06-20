@@ -25,6 +25,7 @@ This server is the stdio bridge that an MCP client launches locally. Point it at
 - **Structured messaging** — send `text`, `task`, `result`, `error`, or `human` messages, optionally addressed to a specific agent.
 - **Paginated history** — pull message history with limit/cursor controls.
 - **Meeting-mode receive** — keep a local inbox of inbound messages, long-poll for new work, and ack handled messages through a portable MCP tool contract.
+- **Continuous listening setup** — run a portable listener command, emit stable wake-up sentinels, and use the packaged skill to wire host-specific model wake-ups.
 - **Session introspection** — list participating agents and fetch session metadata and permissions.
 - **Typed, testable transport** — a clean transport boundary keeps the HTTP contract isolated and easy to mock.
 
@@ -41,6 +42,7 @@ This server is the stdio bridge that an MCP client launches locally. Point it at
 | `ack_messages` | Mark queued inbox messages handled by id. |
 | `poll_once` | One-shot fetch/update for hosts that manage their own loop or scheduler. |
 | `send_message` | Send a `text`/`task`/`result`/`error`/`human` message into the session. |
+| `get_continuous_listening_setup` | Explain the recommended listener command, sentinels, packaged skill, and host wake-up contract. |
 | `get_messages` | Retrieve paginated message history. |
 | `list_agents` | List agents currently visible in the session. |
 | `get_session_info` | Get session metadata and the caller's permissions. |
@@ -53,6 +55,12 @@ Run directly with `npx` (no install required):
 npx -y @agentbridge/mcp-server
 ```
 
+Continuous listening helper:
+
+```bash
+npx -y -p @agentbridge/mcp-server agentbridge-listener --session-link 'https://agentbridge.example.com/s/your-session?token=agt_xxx'
+```
+
 Or clone and build from source:
 
 ```bash
@@ -61,6 +69,7 @@ cd agent-bridge-mcp
 npm install
 npm run build
 node dist/index.js
+node dist/listener.js --session-link 'https://agentbridge.example.com/s/your-session?token=agt_xxx'
 ```
 
 > Requires Node.js >= 18.17.
@@ -139,6 +148,41 @@ npx -y @agentbridge/mcp-server
 ```
 
 The server speaks MCP over stdio and logs diagnostics to stderr.
+
+## Continuous Listening
+
+For a seamless agent-to-agent experience, configure both the MCP server and a host wake-up path. The MCP server can receive messages, but every model host decides for itself how to wake an agent into a new reasoning turn.
+
+This package includes:
+
+- `agentbridge-listener`: a portable command that launches the MCP server, calls `join_meeting`, loops on `receive_messages`, prints inbound messages, and acks them.
+- `skills/agentbridge-continuous-listening/SKILL.md`: an agent skill template that tells agents how to ask for command approval, start the listener, monitor output, and reply.
+- `docs/continuous-listening.md`: detailed host setup notes for Cursor, VS Code, Claude Code, Codex, Hermes, and generic CLI agents.
+- `get_continuous_listening_setup`: an MCP tool that returns the recommended command, stdout sentinels, and host contract.
+
+Start the listener:
+
+```bash
+export AGENTBRIDGE_SESSION_LINK='https://agentbridge.example.com/s/your-session?token=agt_xxx'
+export AGENTBRIDGE_AGENT_NAME='my-assistant'
+agentbridge-listener --session-link "$AGENTBRIDGE_SESSION_LINK" --agent-name "$AGENTBRIDGE_AGENT_NAME"
+```
+
+Watch stdout for:
+
+```text
+AGENTBRIDGE_LISTENER_READY {"connected":true,...}
+AGENTBRIDGE_INBOUND {"id":"msg_123","type":"text","content":"hello",...}
+AGENTBRIDGE_LISTENER_ERROR <message>
+```
+
+Host wake-up regex:
+
+```text
+^AGENTBRIDGE_INBOUND |^AGENTBRIDGE_LISTENER_ERROR
+```
+
+When the host sees `AGENTBRIDGE_INBOUND`, it should wake the agent into a fresh turn with the inbound JSON. The agent then decides whether to respond and calls `send_message` through the MCP server.
 
 ## Meeting Mode Receive
 

@@ -95,6 +95,32 @@ function getNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function getContinuousListeningSetup() {
+  return {
+    summary: 'Continuous listening requires two pieces: an AgentBridge receive loop and a host-specific wake-up path that brings the model back into a fresh turn.',
+    recommended_command: 'agentbridge-listener --session-link "$AGENTBRIDGE_SESSION_LINK" --agent-name "$AGENTBRIDGE_AGENT_NAME"',
+    stdout_sentinels: {
+      ready: 'AGENTBRIDGE_LISTENER_READY <json>',
+      inbound: 'AGENTBRIDGE_INBOUND <json>',
+      error: 'AGENTBRIDGE_LISTENER_ERROR <message>',
+    },
+    skill: {
+      packaged_path: 'skills/agentbridge-continuous-listening/SKILL.md',
+      install_hint: 'Copy or import the packaged skill into your agent host, then ask the agent to run it when joining an AgentBridge session.',
+    },
+    host_contract: [
+      'Ask the user before starting any long-running command if the host requires approval.',
+      'Start agentbridge-listener with the session link and agent name.',
+      'Configure the host to wake the model when stdout matches ^AGENTBRIDGE_INBOUND .',
+      'In the fresh model turn, read the inbound JSON, decide whether to respond, and call send_message through the MCP server.',
+    ],
+    notes: [
+      'The MCP server cannot force every model host to wake up by itself; the host must provide a command monitor, automation, loop, or equivalent trigger.',
+      'The listener acks messages after printing them, so hosts that need durable processing should persist the inbound JSON before acting.',
+    ],
+  };
+}
+
 const meetingInbox = new MeetingInbox(
   session,
   transport,
@@ -235,6 +261,11 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
       },
     },
     {
+      name: 'get_continuous_listening_setup',
+      description: 'Explain the recommended cross-host setup for automatic AgentBridge listening and model wake-ups.',
+      inputSchema: { type: 'object', properties: {}, required: [] },
+    },
+    {
       name: 'get_messages',
       description: 'Retrieve paginated message history for the AgentBridge session.',
       inputSchema: {
@@ -291,6 +322,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       case 'send_message':
         return toolText(await transport.sendMessage(session, SendMessageSchema.parse(args ?? {})));
+      case 'get_continuous_listening_setup':
+        EmptySchema.parse(args ?? {});
+        return toolText(getContinuousListeningSetup());
       case 'get_messages':
         return toolText(await transport.getMessages(session, GetMessagesSchema.parse(args ?? {})));
       case 'list_agents':
