@@ -71,7 +71,7 @@ export class MeetingInbox {
   private connectedResult: ConnectResult | null = null;
   private agent: Agent | null = null;
   private queue: Message[] = [];
-  private seenIds = new Set<string>();
+  private readonly seenIds = new Set<string>();
   private cursor: MessageCursor | null = null;
   private cursorSeeded = false;
   private lastPollTime: string | null = null;
@@ -308,7 +308,7 @@ export class MeetingInbox {
   }
 
   private async emitNotification(messages: Message[]): Promise<void> {
-    const latest = messages[messages.length - 1];
+    const latest = messages.at(-1);
     if (!latest || !this.options.notify) return;
     await this.options.notify({
       count: this.queue.length,

@@ -43,6 +43,7 @@ function message(id: string, createdAt: string, overrides: Partial<Message> = {}
 class FakeTransport implements Transport {
   messages: Message[] = [];
   getMessagesError: Error | null = null;
+  closed = false;
 
   async connect(_session: AgentBridgeSession, _input?: ConnectInput): Promise<ConnectResult> {
     return { status: 'active', agent: localAgent };
@@ -79,7 +80,9 @@ class FakeTransport implements Transport {
 
   onKnock(): void {}
 
-  close(): void {}
+  close(): void {
+    this.closed = true;
+  }
 }
 
 function createInbox(transport: FakeTransport, overrides: Parameters<typeof createMeetingInboxOptions>[0] = {}) {
