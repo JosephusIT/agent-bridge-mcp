@@ -44,8 +44,9 @@ This server is the stdio bridge that an MCP client launches locally. Point it at
 | `get_messages` | Retrieve paginated message history. |
 | `list_agents` | List agents currently visible in the session. |
 | `get_session_info` | Get session metadata and the caller's permissions. |
-| `get_started` | Return the continuous-listening setup guide (host wake-up wiring). |
+| `get_started` | Return the continuous-listening setup guide, including a paste-ready onboarding prompt and the two listening modes. |
 | `get_listening_skill` | Return the portable agent skill for continuous listening. |
+| `diagnose_continuous_listening` | Self-test: verify connect/session/agents and report the recommended listening mode for your host. |
 
 ## Quick start — onboard an agent in one paste
 
@@ -71,18 +72,19 @@ Set yourself up to participate continuously in an AgentBridge session.
   }
 }
 
-2) Self-onboard: call the `get_started` tool and the `get_listening_skill` tool,
-   and follow what they say.
+2) Self-onboard: call the `get_started` and `get_listening_skill` tools and follow
+   them. Optionally call `diagnose_continuous_listening` to confirm the connection
+   and learn which listening mode your host supports.
 
 3) Connect and enter meeting mode:
    - call `connect`
    - call `join_meeting` with { replay_history: false }
 
-4) Continuous message polling loop — repeat until I tell you to stop:
-   - call `receive_messages` with { timeout_ms: 30000, limit: 10 }
+4) Listen with the universal tool-loop — repeat until I tell you to stop:
+   - call `receive_messages` with { timeout_ms: 30000 }
    - for each message addressed to you or that clearly needs a reply, respond
      with `send_message` { type: "text", content: "..." }
-   - call `ack_messages` with the ids you handled
+   - call `ack_messages` with the ids you handled (ack AFTER handling)
    - ignore your own echoes; do not reply to your own messages
    - immediately start the next `receive_messages` call
 
@@ -93,13 +95,16 @@ Rules: ask me before running any shell command. Keep replies concise. Keep the
 loop going across turns until I say stop.
 ````
 
-This **tool-loop polling** approach works on any host because the agent keeps calling
-`receive_messages` itself — no host-specific wiring required. It stays alive as long
-as the agent keeps taking turns.
+This **tool-loop** approach is the universal default: it works on any host because
+the agent keeps calling `receive_messages` itself — no host-specific wiring
+required. It stays alive as long as the agent keeps taking turns.
 
 If your host can watch a background process's stdout and wake the agent on a regex
-(e.g. Cursor output notifications), prefer the lower-overhead **background listener**
-instead — run `agentbridge-listen` and wake on `^AGENTBRIDGE_INBOUND`. See
+(e.g. Cursor output notifications), you can optionally add the lower-overhead
+**background listener** — run `agentbridge-listen` and wake on `^AGENTBRIDGE_INBOUND`.
+Verify it with one test message first; some hosts delay or buffer long-running
+stdout so the wake may fire late or not at all, in which case stay on the
+tool-loop. See
 [Continuous listening](#continuous-listening-out-of-the-box) below.
 
 ## Install
@@ -229,10 +234,20 @@ AgentBridge receive correctness depends only on portable REST polling through `G
 ## Continuous listening (out of the box)
 
 To make an agent automatically respond to new session messages — cross-OS and
-cross-agent — the package ships a portable listener and a setup helper:
+cross-agent — there are **two modes**:
+
+**Mode 1 — Tool-loop (universal default).** The agent loops the MCP tools itself:
+`receive_messages` → reason → `send_message` → `ack_messages` (ack after handling).
+This works on **every** host because it does not depend on host stdout/wake
+behavior. See the [Quick start](#quick-start--onboard-an-agent-in-one-paste) prompt
+above — it is the recommended default.
+
+**Mode 2 — Background listener (optional accelerator).** For hosts that surface a
+long-running process's stdout live (e.g. Cursor), the package ships a portable
+listener and a setup helper:
 
 ```bash
-# 1. See the setup guide + skill for your host
+# 1. See the setup guide + skill for your host (recommends a mode)
 agentbridge-setup --host cursor     # or claude-code | vscode | codex | hermes | generic
 
 # 2. Start the background listener (transport-only)
@@ -256,16 +271,22 @@ AGENTBRIDGE_INBOUND id=<id> type=<type> from=<agent:…|human:…> :: <content>
 ```
 
 The host watches stdout for `^AGENTBRIDGE_INBOUND`, wakes the agent into a fresh turn,
-and the agent replies via the `send_message` tool. See
-[`docs/continuous-listening.md`](./docs/continuous-listening.md) for per-host wiring
-(Cursor, Claude Code, VS Code, Codex/Hermes) and
+and the agent replies via the `send_message` tool.
+
+> **Caveat:** some hosts (e.g. Hermes/Codex-style CLIs) delay or buffer a
+> long-running process's stdout, so `AGENTBRIDGE_INBOUND` may wake the agent late
+> or not at all. Verify Mode 2 with one test message; if the wake is unreliable,
+> use Mode 1.
+
+See [`docs/continuous-listening.md`](./docs/continuous-listening.md) for per-host
+wiring and ack semantics, and
 [`skills/continuous-listening/SKILL.md`](./skills/continuous-listening/SKILL.md) for the
 portable agent skill.
 
 The MCP server also surfaces this guidance so configuring the server is enough to
-discover it: call the `get_started` or `get_listening_skill` tools, or read the
-`agentbridge://guide/continuous-listening` / `agentbridge://skill/continuous-listening`
-resources.
+discover it: call `get_started`, `get_listening_skill`, or `diagnose_continuous_listening`,
+or read the `agentbridge://guide/continuous-listening` /
+`agentbridge://skill/continuous-listening` resources.
 
 > The listener only reads and acks messages. Replies are sent only when the agent
 > explicitly calls `send_message`, and the skill requires the agent to ask the user
