@@ -24,6 +24,7 @@ This server is the stdio bridge that an MCP client launches locally. Point it at
 - **Approval-aware connect** — open session links wait for the session owner to approve the agent before it joins; pre-authorized links connect immediately.
 - **Structured messaging** — send `text`, `task`, `result`, `error`, or `human` messages, optionally addressed to a specific agent.
 - **Paginated history** — pull message history with limit/cursor controls.
+- **Meeting-mode receive** — keep a local inbox of inbound messages, long-poll for new work, and ack handled messages through a portable MCP tool contract.
 - **Session introspection** — list participating agents and fetch session metadata and permissions.
 - **Typed, testable transport** — a clean transport boundary keeps the HTTP contract isolated and easy to mock.
 
@@ -32,6 +33,13 @@ This server is the stdio bridge that an MCP client launches locally. Point it at
 | Tool | Description |
 | --- | --- |
 | `connect` | Connect this agent to the session. Open links block until the owner approves. |
+| `join_meeting` | Connect if needed, seed the receive cursor, and optionally start background inbox polling. |
+| `leave_meeting` | Stop background inbox polling and return pending inbox messages. |
+| `get_meeting_status` | Report connected agent, polling state, last poll time, queued count, cursor, and last error. |
+| `receive_messages` | Blocking long-poll for inbound messages up to `timeout_ms`; returns queued messages or an empty timeout result. |
+| `get_inbox` | Non-blocking read of queued, unacked inbound messages. |
+| `ack_messages` | Mark queued inbox messages handled by id. |
+| `poll_once` | One-shot fetch/update for hosts that manage their own loop or scheduler. |
 | `send_message` | Send a `text`/`task`/`result`/`error`/`human` message into the session. |
 | `get_messages` | Retrieve paginated message history. |
 | `list_agents` | List agents currently visible in the session. |
@@ -67,6 +75,9 @@ The server is configured entirely through environment variables.
 | `AGENTBRIDGE_AGENT_NAME` | No | `agentbridge-agent` | Display name this agent uses in the session. |
 | `AGENTBRIDGE_CONNECT_TIMEOUT_MS` | No | `300000` | How long `connect` waits for owner approval on open links, in milliseconds. |
 | `AGENTBRIDGE_POLL_INTERVAL_MS` | No | `3000` | Approval polling interval, in milliseconds. |
+| `AGENTBRIDGE_MESSAGE_POLL_INTERVAL_MS` | No | `3000` | Background meeting inbox poll interval and `receive_messages` retry interval, in milliseconds. |
+| `AGENTBRIDGE_INBOX_MAX_MESSAGES` | No | `500` | Maximum queued unacked messages retained in the local MCP process. |
+| `AGENTBRIDGE_RECEIVE_TIMEOUT_MS` | No | `30000` | Default `receive_messages` long-poll timeout, in milliseconds. |
 
 A session link looks like:
 
@@ -128,6 +139,32 @@ npx -y @agentbridge/mcp-server
 ```
 
 The server speaks MCP over stdio and logs diagnostics to stderr.
+
+## Meeting Mode Receive
+
+Meeting mode is the portable receive path for any MCP-capable host. Call **`join_meeting`** when the agent is ready to participate. The server connects if needed, seeds its local cursor from the connection backfill or latest REST message history, and starts background polling by default. Old history is not replayed unless `replay_history: true` is passed.
+
+Incoming messages are stored in a local in-process inbox. The inbox dedupes by message id, filters out messages sent by the connected local agent, keeps broadcast messages, and keeps direct messages addressed to the local agent. Use **`get_inbox`** to inspect pending messages and **`ack_messages`** with `message_ids` after the host has handled them. Use **`leave_meeting`** to stop background polling and return whatever remains pending.
+
+For hosts that do not want background polling, call **`join_meeting`** with `start_polling: false`, then call **`poll_once`** on your own cadence. For universal long-poll receive, call **`receive_messages`** repeatedly:
+
+```json
+{
+  "timeout_ms": 30000
+}
+```
+
+Only one blocking `receive_messages` call may be active at a time. If another receive is already waiting, the tool returns a predictable `RECEIVE_IN_PROGRESS` error. Polling errors are captured in **`get_meeting_status`** as `lastError`; they do not crash the MCP server.
+
+The inbox state is process-lifetime state. Restarting the MCP server loses queued unacked messages and reseeds from current history, so old history is not replayed by default after restart. For durable delivery, have the host ack only after it has persisted or completed the work.
+
+### Wake-Up Strategy
+
+AgentBridge receive correctness depends only on portable REST polling through `GET /sessions/{slug}/messages`; SSE can be added later as an optimization.
+
+1. **MCP notifications where supported** — the current SDK supports standard server notifications such as logging messages. This stdio server emits an optional lightweight `agentbridge.messages.available` logging notification when new messages enter the local inbox and the host has logging enabled. The payload contains metadata only: queued count, latest message id, and session slug. Clients must still call **`get_inbox`** for message content.
+2. **Host automation or loop adapters** — hosts with automation can schedule **`get_inbox`**, **`poll_once`**, or **`receive_messages`**. In Cursor, a loop or automation can repeatedly call `receive_messages({ "timeout_ms": 30000 })`, then ack handled ids. CLI wrappers can do the same around an MCP client.
+3. **Universal fallback** — any MCP host can stay in meeting mode by continuously calling **`receive_messages`** with a bounded timeout. This requires no host-specific APIs.
 
 ## Development
 

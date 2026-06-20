@@ -7,6 +7,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { z } from 'zod';
 
 import { parseSessionLink } from './link-parser.js';
+import { createMeetingInboxOptions, MeetingInbox } from './meeting-inbox.js';
 import type { AgentBridgeSession, ConnectResult, Transport } from './transport.js';
 import { HttpTransport } from './transport.js';
 
@@ -25,6 +26,24 @@ const GetMessagesSchema = z.object({
   limit: z.coerce.number().int().positive().max(500).optional().default(100),
   before: z.string().optional(),
   include_direct: z.boolean().optional().default(true),
+});
+
+const JoinMeetingSchema = z.object({
+  capabilities: z.array(z.string()).optional().default([]),
+  replay_history: z.boolean().optional().default(false),
+  start_polling: z.boolean().optional().default(true),
+});
+
+const ReceiveMessagesSchema = z.object({
+  timeout_ms: z.coerce.number().int().min(0).max(300_000).optional(),
+});
+
+const AckMessagesSchema = z.object({
+  message_ids: z.array(z.string().min(1)).min(1),
+});
+
+const PollOnceSchema = z.object({
+  seed_only: z.boolean().optional().default(false),
 });
 
 const EmptySchema = z.object({}).passthrough();
@@ -57,7 +76,7 @@ const transport: Transport = new HttpTransport();
 
 const server = new Server(
   { name: '@agentbridge/mcp-server', version: '0.1.0' },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {}, logging: {} } }
 );
 
 function toolText(value: unknown) {
@@ -75,6 +94,29 @@ function getNumberEnv(name: string, fallback: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
+
+const meetingInbox = new MeetingInbox(
+  session,
+  transport,
+  connectAndAwaitApproval,
+  createMeetingInboxOptions({
+    pollIntervalMs: getNumberEnv('AGENTBRIDGE_MESSAGE_POLL_INTERVAL_MS', 3_000),
+    inboxMaxMessages: getNumberEnv('AGENTBRIDGE_INBOX_MAX_MESSAGES', 500),
+    defaultReceiveTimeoutMs: getNumberEnv('AGENTBRIDGE_RECEIVE_TIMEOUT_MS', 30_000),
+    notify: async (event) => {
+      await server.sendLoggingMessage({
+        level: 'info',
+        logger: 'agentbridge.inbox',
+        data: {
+          event: 'agentbridge.messages.available',
+          queued_count: event.count,
+          latest_message_id: event.latestId,
+          session: event.session,
+        },
+      });
+    },
+  })
+);
 
 async function connectAndAwaitApproval(capabilities: string[]): Promise<ConnectResult> {
   const initial = await transport.connect(session, { capabilities });
@@ -118,6 +160,67 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
       },
     },
     {
+      name: 'join_meeting',
+      description: 'Join meeting mode, seed the receive cursor, and optionally start background inbox polling.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          capabilities: { type: 'array', items: { type: 'string' } },
+          replay_history: { type: 'boolean', default: false },
+          start_polling: { type: 'boolean', default: true },
+        },
+        required: [],
+      },
+    },
+    {
+      name: 'leave_meeting',
+      description: 'Stop background inbox polling and return currently pending inbox messages.',
+      inputSchema: { type: 'object', properties: {}, required: [] },
+    },
+    {
+      name: 'get_meeting_status',
+      description: 'Report connection, polling, cursor, queued message count, last poll time, and last error.',
+      inputSchema: { type: 'object', properties: {}, required: [] },
+    },
+    {
+      name: 'receive_messages',
+      description: 'Long-poll for new inbound meeting messages, returning queued messages or an empty timeout result.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          timeout_ms: { type: 'number', minimum: 0, maximum: 300000 },
+        },
+        required: [],
+      },
+    },
+    {
+      name: 'get_inbox',
+      description: 'Read queued, unacked inbound meeting messages without blocking.',
+      inputSchema: { type: 'object', properties: {}, required: [] },
+    },
+    {
+      name: 'ack_messages',
+      description: 'Mark queued inbox messages handled by id.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          message_ids: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['message_ids'],
+      },
+    },
+    {
+      name: 'poll_once',
+      description: 'Fetch message history once and update the local inbox for hosts that manage their own loops.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          seed_only: { type: 'boolean', default: false },
+        },
+        required: [],
+      },
+    },
+    {
       name: 'send_message',
       description: 'Send a text/task/result/error/human message into the AgentBridge session.',
       inputSchema: {
@@ -155,7 +258,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
       case 'connect': {
         const { capabilities } = ConnectSchema.parse(args ?? {});
-        return toolText(await connectAndAwaitApproval(capabilities));
+        return toolText(await meetingInbox.connect(capabilities));
+      }
+      case 'join_meeting': {
+        const input = JoinMeetingSchema.parse(args ?? {});
+        return toolText(await meetingInbox.join({
+          capabilities: input.capabilities,
+          replayHistory: input.replay_history,
+          startPolling: input.start_polling,
+        }));
+      }
+      case 'leave_meeting':
+        EmptySchema.parse(args ?? {});
+        return toolText(meetingInbox.leave());
+      case 'get_meeting_status':
+        EmptySchema.parse(args ?? {});
+        return toolText(meetingInbox.status());
+      case 'receive_messages': {
+        const input = ReceiveMessagesSchema.parse(args ?? {});
+        return toolText(await meetingInbox.receive({ timeoutMs: input.timeout_ms }));
+      }
+      case 'get_inbox':
+        EmptySchema.parse(args ?? {});
+        return toolText(meetingInbox.getInbox());
+      case 'ack_messages': {
+        const input = AckMessagesSchema.parse(args ?? {});
+        return toolText(meetingInbox.ack({ messageIds: input.message_ids }));
+      }
+      case 'poll_once': {
+        const input = PollOnceSchema.parse(args ?? {});
+        return toolText(await meetingInbox.pollOnce({ seedOnly: input.seed_only }));
       }
       case 'send_message':
         return toolText(await transport.sendMessage(session, SendMessageSchema.parse(args ?? {})));
