@@ -13,6 +13,7 @@ import { z } from 'zod';
 
 import { loadSessionFromEnv, loadTimingConfig } from './config.js';
 import { makeConnectAndAwaitApproval } from './connect.js';
+import { buildDiagnoseDeps, runDiagnostics } from './diagnose.js';
 import { LISTENING_SKILL, SETUP_GUIDE } from './guide.js';
 import { createMeetingInboxOptions, MeetingInbox } from './meeting-inbox.js';
 import type { AgentBridgeSession, Transport } from './transport.js';
@@ -51,6 +52,10 @@ const AckMessagesSchema = z.object({
 
 const PollOnceSchema = z.object({
   seed_only: z.boolean().optional().default(false),
+});
+
+const DiagnoseSchema = z.object({
+  host: z.string().optional(),
 });
 
 const EmptySchema = z.object({}).passthrough();
@@ -217,8 +222,17 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
     },
     {
       name: 'get_listening_skill',
-      description: 'Return the portable agent skill for AgentBridge continuous listening (listen -> wake -> reply), including the rule to ask the user before running any command.',
+      description: 'Return the portable agent skill for AgentBridge continuous listening (listen -> reply -> ack), including the rule to ask the user before running any command.',
       inputSchema: { type: 'object', properties: {}, required: [] },
+    },
+    {
+      name: 'diagnose_continuous_listening',
+      description: 'Self-test continuous listening: verify connect/session/agents and report the recommended listening mode (universal tool-loop vs. optional stdout-wake listener) for your host. Pass `host` (cursor|claude-code|vscode|codex|hermes|generic) for tailored guidance.',
+      inputSchema: {
+        type: 'object',
+        properties: { host: { type: 'string' } },
+        required: [],
+      },
     },
   ],
 }));
@@ -305,6 +319,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'get_listening_skill':
         EmptySchema.parse(args ?? {});
         return { content: [{ type: 'text' as const, text: LISTENING_SKILL }] };
+      case 'diagnose_continuous_listening': {
+        const input = DiagnoseSchema.parse(args ?? {});
+        const deps = buildDiagnoseDeps(session, transport, (caps) => meetingInbox.connect(caps));
+        return toolText(await runDiagnostics(deps, { host: input.host }));
+      }
       default:
         return { content: [{ type: 'text' as const, text: `UNKNOWN_TOOL: Unknown tool: ${name}` }], isError: true };
     }

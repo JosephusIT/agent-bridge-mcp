@@ -5,46 +5,56 @@ description: Listen continuously to an AgentBridge session and reply automatical
 
 # AgentBridge continuous listening
 
-Participate in an AgentBridge session continuously: detect new messages and reply,
-without your model staying in an infinite loop. This works on any host because it
-relies only on a background process printing a stable sentinel that the host watches.
+Participate in an AgentBridge session continuously: detect new messages and reply.
+The reliable, universal way to do this is the **tool-loop**: you call the MCP tools
+yourself in a loop. It works on every host because it does not depend on host
+stdout/wake behavior.
 
-## How it works
+## Two modes
 
-An MCP server cannot push into a model's reasoning. Continuous listening is three
-portable pieces:
+1. **Tool-loop (default).** You loop `receive_messages` -> reason -> `send_message`
+   -> `ack_messages`. Use this unless you have proven the accelerator works.
+2. **Background listener (optional accelerator).** `agentbridge-listen` prints one
+   `AGENTBRIDGE_INBOUND` line per message; a host that watches that stdout
+   (`^AGENTBRIDGE_INBOUND`) can wake you into a fresh turn. Only reliable on hosts
+   that surface a long-running process's stdout live (e.g. Cursor). Some hosts
+   (e.g. Hermes/Codex CLIs) buffer it until exit, so the wake never fires.
 
-1. **Background listener** — `agentbridge-listen` connects, joins meeting mode,
-   long-polls `receive_messages`, prints one line per new message prefixed with
-   `AGENTBRIDGE_INBOUND`, and acks it. It is transport-only and never runs commands.
-2. **Host wake-up** — the host watches the listener's stdout for `^AGENTBRIDGE_INBOUND`
-   and surfaces a fresh agent turn on each match.
-3. **Agent turn** — you read the new message and reply with the `send_message` MCP tool.
+## Steps (tool-loop)
 
-## Steps
+1. **Ask before running anything.** State any command you intend to run and get
+   explicit user approval. Never execute commands silently.
+2. **Connect**: call `connect`, then `join_meeting` with `{ replay_history: false }`.
+3. **Loop** until the user says stop:
+   - call `receive_messages` with `{ timeout_ms: 30000 }`
+   - for each message addressed to you or that clearly needs a reply, reply via
+     `send_message` (`{ type: 'text', content: '…' }`)
+   - call `ack_messages` with the ids you handled — **ack after handling**, not before
+   - immediately start the next `receive_messages`
+4. **Stop** by ending the loop (or terminating the listener) when the user is done.
 
-1. **Ask before running anything.** State the exact command you intend to run
-   (the listener) and get explicit user approval. Never execute commands silently.
-2. **Start the listener** in the background:
+## Optional: enable the listener accelerator
 
-   ```bash
-   AGENTBRIDGE_SESSION_LINK='<link>' AGENTBRIDGE_AGENT_NAME='<name>' agentbridge-listen
-   ```
+Only if your host wakes you on background stdout. Run:
 
-   It prints `AGENTBRIDGE_LISTENER_READY` once, then `AGENTBRIDGE_INBOUND ...` per message.
-3. **Wire host wake-up** to the regex `^AGENTBRIDGE_INBOUND` (see `docs/continuous-listening.md`).
-4. **On each wake**, read the new `AGENTBRIDGE_INBOUND` line(s), decide whether a reply
-   is warranted (skip your own echoes and noise), and reply via `send_message`.
-5. **Stop** by terminating the listener process when the user is done.
+```bash
+AGENTBRIDGE_SESSION_LINK='<link>' AGENTBRIDGE_AGENT_NAME='<name>' agentbridge-listen
+```
+
+It prints `AGENTBRIDGE_LISTENER_READY` then `AGENTBRIDGE_INBOUND ...` per message.
+Test with one message: if `AGENTBRIDGE_INBOUND` appears but no fresh turn fires,
+your host buffers stdout — fall back to the tool-loop.
 
 ## Rules
 
 - Require explicit user approval for every command before executing it.
 - Only reply when a message is addressed to you or clearly needs a response.
 - Keep replies concise; never loop on your own messages.
+- Ack only after handling, so interrupted work is re-delivered.
 
 ## Discovery
 
 If this skill is not installed, the MCP server can hand it to you: call the
 `get_listening_skill` tool, or read the `agentbridge://skill/continuous-listening`
-resource. For setup guidance call `get_started` or run `agentbridge-setup`.
+resource. For setup guidance call `get_started`, run `agentbridge-setup`, or call
+`diagnose_continuous_listening` to confirm wiring and host capability.
