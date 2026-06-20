@@ -26,7 +26,7 @@ import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-import { DEFAULT_AGENT_NAME, loadSessionFromEnv, loadTimingConfig } from './config.js';
+import { DEFAULT_AGENT_NAME, loadSessionFromEnv, loadTimingConfig, type TimingConfig } from './config.js';
 import { makeConnectAndAwaitApproval } from './connect.js';
 import { createMeetingInboxOptions, MeetingInbox } from './meeting-inbox.js';
 import type { Message } from './transport.js';
@@ -192,28 +192,68 @@ function createWrapperSource(command: string, args: string[]): MessageSource {
   };
 }
 
-async function main(): Promise<void> {
-  const flags = parseArgs(argv.slice(2));
-  const timing = loadTimingConfig();
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
+function logError(message: string): void {
+  console.error(`${ERROR_SENTINEL} ${message}`);
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Create the source and join meeting mode; exit with a sentinel on failure. */
+async function startSource(flags: ListenFlags): Promise<MessageSource> {
   let source: MessageSource;
   try {
     source = flags.command
       ? createWrapperSource(flags.command, flags.args)
       : createInProcessSource();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`${ERROR_SENTINEL} ${message}`);
+    logError(errorMessage(err));
     process.exit(1);
   }
 
   try {
     await source.join(flags.replay);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`${ERROR_SENTINEL} ${message}`);
+    logError(errorMessage(err));
     process.exit(1);
   }
+  return source;
+}
+
+/** Print and ack a batch of inbound messages; ack failures are non-fatal. */
+async function emitAndAck(source: MessageSource, messages: Message[], json: boolean): Promise<void> {
+  for (const message of messages) {
+    console.log(formatInbound(message, json));
+  }
+  try {
+    await source.ack(messages.map((m) => m.id));
+  } catch (err) {
+    logError(`ack failed: ${errorMessage(err)}`);
+  }
+}
+
+/** Run one receive/emit/ack cycle. A transient receive error must not stop the loop. */
+async function drainOnce(source: MessageSource, flags: ListenFlags, timing: TimingConfig): Promise<void> {
+  let messages: Message[];
+  try {
+    messages = await source.receive(timing.defaultReceiveTimeoutMs);
+  } catch (err) {
+    logError(errorMessage(err));
+    await sleep(timing.messagePollIntervalMs);
+    return;
+  }
+  if (messages.length > 0) {
+    await emitAndAck(source, messages, flags.json);
+  }
+}
+
+async function main(): Promise<void> {
+  const flags = parseArgs(argv.slice(2));
+  const timing = loadTimingConfig();
+  const source = await startSource(flags);
   console.log(`${READY_SENTINEL} agent=${source.agentName} mode=${flags.command ? 'wrapper' : 'in-process'}`);
 
   let stopping = false;
@@ -227,28 +267,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', shutdown);
 
   do {
-    let messages: Message[];
-    try {
-      messages = await source.receive(timing.defaultReceiveTimeoutMs);
-    } catch (err) {
-      // Resilience: a transient receive error must not kill the listener.
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`${ERROR_SENTINEL} ${message}`);
-      await new Promise((resolve) => setTimeout(resolve, timing.messagePollIntervalMs));
-      continue;
-    }
-
-    if (messages.length > 0) {
-      for (const message of messages) {
-        console.log(formatInbound(message, flags.json));
-      }
-      try {
-        await source.ack(messages.map((m) => m.id));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`${ERROR_SENTINEL} ack failed: ${message}`);
-      }
-    }
+    await drainOnce(source, flags, timing);
   } while (!flags.once && !stopping);
 
   shutdown();
@@ -266,5 +285,5 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  void main();
+  await main();
 }

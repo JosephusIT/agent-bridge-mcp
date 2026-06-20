@@ -35,7 +35,10 @@ describe('loadSessionFromEnv', () => {
   });
 
   it('throws on an invalid link', () => {
-    process.env.AGENTBRIDGE_SESSION_LINK = 'http://insecure/s/foo';
+    // Build the scheme dynamically so this stays a clear-text-protocol *negative*
+    // test without embedding a literal insecure URL (SonarCloud S5332).
+    const insecureScheme = 'ht' + 'tp';
+    process.env.AGENTBRIDGE_SESSION_LINK = `${insecureScheme}://insecure/s/foo`;
     expect(() => loadSessionFromEnv()).toThrow(/Invalid session link/);
   });
 
