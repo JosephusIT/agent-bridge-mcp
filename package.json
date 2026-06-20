@@ -23,12 +23,16 @@
     "llm"
   ],
   "bin": {
-    "agentbridge-mcp-server": "dist/index.js"
+    "agentbridge-mcp-server": "dist/index.js",
+    "agentbridge-listen": "dist/listen.js",
+    "agentbridge-setup": "dist/setup.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist",
+    "skills",
+    "docs/continuous-listening.md",
     "README.md",
     "LICENSE"
   ],
@@ -36,6 +40,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "dev": "tsx src/index.ts",
+    "listen": "tsx src/listen.ts",
+    "setup": "tsx src/setup.ts",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

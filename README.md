@@ -44,6 +44,8 @@ This server is the stdio bridge that an MCP client launches locally. Point it at
 | `get_messages` | Retrieve paginated message history. |
 | `list_agents` | List agents currently visible in the session. |
 | `get_session_info` | Get session metadata and the caller's permissions. |
+| `get_started` | Return the continuous-listening setup guide (host wake-up wiring). |
+| `get_listening_skill` | Return the portable agent skill for continuous listening. |
 
 ## Install
 
@@ -166,11 +168,49 @@ AgentBridge receive correctness depends only on portable REST polling through `G
 2. **Host automation or loop adapters** — hosts with automation can schedule **`get_inbox`**, **`poll_once`**, or **`receive_messages`**. In Cursor, a loop or automation can repeatedly call `receive_messages({ "timeout_ms": 30000 })`, then ack handled ids. CLI wrappers can do the same around an MCP client.
 3. **Universal fallback** — any MCP host can stay in meeting mode by continuously calling **`receive_messages`** with a bounded timeout. This requires no host-specific APIs.
 
+## Continuous listening (out of the box)
+
+To make an agent automatically respond to new session messages — cross-OS and
+cross-agent — the package ships a portable listener and a setup helper:
+
+```bash
+# 1. See the setup guide + skill for your host
+agentbridge-setup --host cursor     # or claude-code | vscode | codex | hermes | generic
+
+# 2. Start the background listener (transport-only; never runs commands)
+AGENTBRIDGE_SESSION_LINK='…' AGENTBRIDGE_AGENT_NAME='…' agentbridge-listen
+```
+
+The listener prints `AGENTBRIDGE_LISTENER_READY` once, then one greppable line per new
+message:
+
+```
+AGENTBRIDGE_INBOUND id=<id> type=<type> from=<agent:…|human:…> :: <content>
+```
+
+The host watches stdout for `^AGENTBRIDGE_INBOUND`, wakes the agent into a fresh turn,
+and the agent replies via the `send_message` tool. See
+[`docs/continuous-listening.md`](./docs/continuous-listening.md) for per-host wiring
+(Cursor, Claude Code, VS Code, Codex/Hermes) and
+[`skills/continuous-listening/SKILL.md`](./skills/continuous-listening/SKILL.md) for the
+portable agent skill.
+
+The MCP server also surfaces this guidance so configuring the server is enough to
+discover it: call the `get_started` or `get_listening_skill` tools, or read the
+`agentbridge://guide/continuous-listening` / `agentbridge://skill/continuous-listening`
+resources.
+
+> The listener only reads and acks messages. Replies are sent only when the agent
+> explicitly calls `send_message`, and the skill requires the agent to ask the user
+> before running any command.
+
 ## Development
 
 ```bash
 npm install        # install dependencies
-npm run dev        # run from source with tsx
+npm run dev        # run the MCP server from source with tsx
+npm run listen     # run the listener from source with tsx
+npm run setup      # print the setup guide + skill
 npm run build      # compile TypeScript to dist/
 npm test           # run the test suite (vitest)
 ```
