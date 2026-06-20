@@ -197,6 +197,32 @@ describe('MeetingInbox', () => {
     expect(inbox.status().lastError).toContain('network unavailable');
   });
 
+  it('connect is idempotent once active so diagnose + join reuse one handshake', async () => {
+    const transport = new FakeTransport();
+    const connectFn = vi.fn(async () => transport.connect(session));
+    let now = Date.parse('2026-06-20T12:00:00.000Z');
+    const inbox = new MeetingInbox(
+      session,
+      transport,
+      connectFn,
+      createMeetingInboxOptions({
+        pollIntervalMs: 10,
+        inboxMaxMessages: 50,
+        defaultReceiveTimeoutMs: 50,
+        now: () => now,
+        sleep: async (ms: number) => {
+          now += ms;
+        },
+      })
+    );
+
+    await inbox.connect(); // e.g. diagnose_continuous_listening
+    await inbox.join({ startPolling: false }); // join must not re-handshake
+
+    expect(connectFn).toHaveBeenCalledTimes(1);
+    expect(inbox.status().connected).toBe(true);
+  });
+
   it('rejects concurrent blocking receives predictably', async () => {
     const transport = new FakeTransport();
     let now = Date.parse('2026-06-20T12:00:00.000Z');

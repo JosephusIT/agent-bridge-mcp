@@ -88,6 +88,11 @@ export class MeetingInbox {
   ) {}
 
   async connect(capabilities: string[] = []): Promise<ConnectResult> {
+    // Idempotent: once active, reuse the cached connection. A second /connect can
+    // re-enter the knock/approval path (e.g. with a single-use token) and time
+    // out, so callers like diagnose_continuous_listening followed by join_meeting
+    // must not trigger a fresh handshake.
+    if (this.connectedResult?.status === 'active') return this.connectedResult;
     const result = await this.connectFn(capabilities);
     this.captureConnection(result);
     return result;
