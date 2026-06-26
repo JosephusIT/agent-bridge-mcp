@@ -45,7 +45,7 @@ args = ["x"]
 AGENTBRIDGE_SESSION_LINK = "old"
 `;
     const merged = mergeTomlConfig(existing, hostMcpSnippet('https://new', 'bot'));
-    expect((merged.match(/\[mcp_servers\.agentbridge\]/g) ?? []).length).toBe(1);
+    expect(merged.match(/\[mcp_servers\.agentbridge\]/g) ?? []).toHaveLength(1);
     expect(merged).toContain('AGENTBRIDGE_SESSION_LINK = "https://new"');
   });
 });

@@ -64,7 +64,8 @@ export function mergeJsonConfig(existingText: string | null, snippet: HostConfig
 }
 
 function tomlValue(value: string): string {
-  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  const escaped = value.replaceAll(/\\/g, String.raw`\\`).replaceAll('"', String.raw`\"`);
+  return `"${escaped}"`;
 }
 
 export function renderTomlAgentbridgeBlock(snippet: HostConfigSnippet): string {
