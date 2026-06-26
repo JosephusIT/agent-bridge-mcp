@@ -6,6 +6,43 @@ Model Context Protocol server for AgentBridge sessions. It lets AI agents on
 different hosts share one session and exchange messages through a common MCP
 tool contract.
 
+AgentBridge is an agent-to-agent (A2A) relay. Instead of each AI assistant
+working in isolation, they join a shared session and exchange structured
+messages — tasks, results, plain text, and human notes. Because the bridge
+speaks MCP over stdio, any MCP-capable client (Claude, Cursor, Codex, Hermes,
+and others) can drop in and talk to agents running elsewhere.
+
+## Architecture
+
+This server is the stdio bridge an MCP client launches locally. Point it at a
+session link and it relays messages between your agent and everyone else in the
+session.
+
+```mermaid
+flowchart LR
+    client["MCP client<br/>(Claude, Cursor, Codex, Hermes, ...)"]
+    server["agent-bridge-mcp server<br/>(this package)"]
+    relay["AgentBridge relay<br/>(session host)"]
+    others["Other agents<br/>in the shared session"]
+
+    client -->|"MCP (stdio)"| server
+    server -->|"HTTPS"| relay
+    relay -.->|"responses"| server
+    server -.->|"responses"| client
+    relay <-->|"shared session"| others
+```
+
+## Features
+
+- **Cross-vendor collaboration** — any MCP client can join the same AgentBridge session.
+- **Approval-aware connect** — open session links wait for the session owner to approve the agent before it joins; pre-authorized links connect immediately.
+- **Structured messaging** — send `text`, `task`, `result`, `error`, or `human` messages, optionally addressed to a specific agent.
+- **Paginated history** — pull message history with limit/cursor controls.
+- **Meeting-mode receive** — keep a local inbox of inbound messages, long-poll for new work, and ack handled messages through a portable MCP tool contract.
+- **Session introspection** — list participating agents and fetch session metadata and permissions.
+- **Multiple listening modes** — an interactive tool-loop that works everywhere, an optional native wake adapter, and an optional fully autonomous worker.
+- **Typed, testable transport** — a clean transport boundary keeps the HTTP contract isolated and easy to mock.
+
 ## Start here (for AIs and humans)
 
 - If you are an AI agent configuring this from a git URL, read [`AGENTS.md`](./AGENTS.md).
@@ -29,6 +66,12 @@ npx -y -p @junctum/agent-bridge-mcp agentbridge-worker
 ```
 
 Homebrew (tap):
+
+> **Work in progress — available once published.** The tap is not live yet. The
+> formula points at an unpublished npm tarball and still carries a placeholder
+> `sha256`, so `brew install` will fail with a checksum mismatch until the
+> `0.3.0` package is published to npm and the real checksum is filled in. Use the
+> `npx` install above in the meantime.
 
 ```bash
 brew tap JosephusIT/homebrew-agentbridge
@@ -88,6 +131,21 @@ agentbridge-setup --host <host> --write-skill
   - Native wake adapter: experimental (stdout may be delayed/unreliable)
   - Autonomous worker: supported (`agentbridge-worker --host codex`, uses `codex exec`)
 
+> **Note:** Codex's config is genuinely global (`~/.codex/config.toml`), so the
+> setup writes there. By contrast, Claude Code uses a project-local `.mcp.json`.
+> This difference is intentional and reflects how each host resolves its
+> configuration — it is not a bug.
+
+### Hermes
+
+- Config path: `.mcp.json` (project)
+- Format: JSON
+- Skill location: `AGENTS.md`
+- Modes:
+  - Interactive tool-loop: supported (recommended default)
+  - Native wake adapter: experimental (stdout watcher)
+  - Autonomous worker: supported
+
 ### GitHub Copilot / VS Code
 
 - Config path: `.vscode/mcp.json`
@@ -132,6 +190,28 @@ wake can trigger new agent turns from regex `^AGENTBRIDGE_INBOUND`.
 `agentbridge-worker` long-polls and runs a headless host CLI to draft replies.
 Use only when you intentionally want unattended operation and trust the host CLI
 auth/environment.
+
+The worker runs **fully autonomous** — it never waits on live human prompts. It
+has three permission tiers:
+
+- **Default (existing config)** — honors the host's *already-configured*
+  allow/deny rules (e.g. `permissions.allow`/`CLAUDE.md`, `~/.codex/config.toml`
+  + execpolicy, `~/.cursor/cli-config.json`). The worker does not define a new
+  allowlist; it runs what the host already permits and denies the rest. Because
+  there are no interactive prompts, anything that would normally pause for
+  approval is auto-denied — sandboxed environments never block waiting for a
+  human.
+- **`--full-access`** — grants everything (claude `bypassPermissions`, codex
+  `--sandbox danger-full-access`, cursor `--force`). Use only in disposable or
+  fully trusted environments.
+- **`--read-only`** (optional) — the worker only reads and replies; no tools that
+  modify the system run (claude `--permission-mode plan`, codex
+  `--sandbox read-only`, cursor without `--force`).
+
+> **Caveat (cursor-agent):** cursor's headless CLI has no clean
+> "allow-list-only, silently deny the rest" switch. It honors the deny list, but
+> broadly auto-running allowed actions effectively requires `--force`, which is
+> broader than the other hosts' default tier. Choose the tier accordingly.
 
 ## Exposed MCP tools
 

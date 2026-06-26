@@ -85,21 +85,55 @@ export function renderTomlAgentbridgeBlock(snippet: HostConfigSnippet): string {
   ].join('\n');
 }
 
+function isAgentbridgeTableName(name: string): boolean {
+  return name === 'mcp_servers.agentbridge' || name.startsWith('mcp_servers.agentbridge.');
+}
+
+/**
+ * Remove every line that belongs to the `[mcp_servers.agentbridge]` table or any
+ * of its child tables (`[mcp_servers.agentbridge.*]`, e.g. the `env` subtable).
+ *
+ * A naive regex like `/^\[mcp_servers\.agentbridge\][\s\S]*?(?=^\[|$)/m` stops at
+ * the first child header (`[mcp_servers.agentbridge.env]`), so a repeated install
+ * leaves a stale `env` subtable behind and produces a duplicate (invalid) TOML.
+ * Walking line-by-line lets us skip the whole agentbridge subtree and stop only
+ * when we reach a header that is NOT a child of `mcp_servers.agentbridge`.
+ */
+function stripAgentbridgeTables(text: string): string {
+  const headerRe = /^\s*\[\[?([^\]]+)\]\]?\s*$/;
+  const kept: string[] = [];
+  let skipping = false;
+  for (const line of text.split('\n')) {
+    const header = headerRe.exec(line);
+    if (header) {
+      const tableName = header[1].trim();
+      if (isAgentbridgeTableName(tableName)) {
+        skipping = true;
+        continue;
+      }
+      skipping = false;
+      kept.push(line);
+      continue;
+    }
+    if (skipping) continue;
+    kept.push(line);
+  }
+  return kept.join('\n');
+}
+
 /**
  * Idempotent TOML merge for [mcp_servers.agentbridge] (+ env subtable).
- * We intentionally scope replacement to the agentbridge table and keep the rest
- * of the file intact.
+ * We strip the entire existing agentbridge subtree and append a freshly rendered
+ * block, keeping the rest of the file intact. This is safe to run repeatedly.
  */
 export function mergeTomlConfig(existingText: string | null, snippet: HostConfigSnippet): string {
   const current = existingText ?? '';
   const block = renderTomlAgentbridgeBlock(snippet);
-  const tableRe = /^\[mcp_servers\.agentbridge\][\s\S]*?(?=^\[|$)/m;
-  if (tableRe.test(current)) {
-    return current.replace(tableRe, block).replace(/\n{3,}/g, '\n\n');
-  }
-  const trimmed = current.trimEnd();
-  if (!trimmed) return block;
-  return `${trimmed}\n\n${block}`;
+  const stripped = stripAgentbridgeTables(current)
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd();
+  if (!stripped) return block;
+  return `${stripped}\n\n${block}`;
 }
 
 export function installHostConfig(opts: InstallOptions): InstallResult {

@@ -43,11 +43,41 @@ Hosts that can watch process output should wake on `^AGENTBRIDGE_INBOUND`.
 Run:
 
 ```bash
-agentbridge-worker --host <cursor|claude-code|codex>
+agentbridge-worker --host <cursor|claude-code|codex> [--full-access | --read-only]
 ```
 
 The worker long-polls inbound messages and invokes the selected host headless CLI
 to generate replies, then sends and acks them.
+
+### Trust tiers
+
+There is **no `--allow` flag**; the worker never defines a new allowlist. It runs
+fully autonomous (no live human prompts) and relies on the host's own config:
+
+| Tier | Flag | claude-code | codex | cursor |
+| --- | --- | --- | --- | --- |
+| Existing config (default) | _(none)_ | `-p --permission-mode dontAsk --strict-mcp-config` | `--ask-for-approval never exec` | `-p` |
+| Full access | `--full-access` | `-p --permission-mode bypassPermissions` | `--ask-for-approval never exec --sandbox danger-full-access` | `-p --force` |
+| Read-only | `--read-only` | `-p --permission-mode plan --strict-mcp-config` | `--ask-for-approval never exec --sandbox read-only` | `-p` |
+
+- **Default** honors the host's already-configured allow/deny rules
+  (`~/.codex/config.toml` + execpolicy `.rules` for codex, `permissions.allow` /
+  `CLAUDE.md` for claude-code, `~/.cursor/cli-config.json` for cursor). It does
+  **not** pass `--ignore-rules` / `--ignore-user-config`.
+- **`--full-access`** grants the host CLI everything.
+- **`--read-only`** restricts the host CLI to replies only.
+
+> **Cursor caveat:** cursor headless has no clean "allow-list-only, silently deny
+> the rest" switch. In the default tier it honors your deny list but auto-runs
+> allowed actions; `--full-access` adds `--force`.
+
+### Input & failure handling
+
+- The message content is written to a private temp file (mode `0600`); only its
+  path is passed in `argv`, so untrusted content never leaks via `ps`/`ARG_MAX`.
+- On a per-message failure the worker logs to stderr, sends an explicit
+  `[agentbridge-worker error] …` message, acks the message, and continues. It
+  never forwards CLI `stderr` as a reply.
 
 Safety notes:
 - Explicitly opt in to this mode (it executes host CLI commands).

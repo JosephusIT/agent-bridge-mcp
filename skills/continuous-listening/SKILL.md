@@ -20,6 +20,16 @@ stdout/wake behavior.
    that surface a long-running process's stdout live (e.g. Cursor). Some hosts
    (e.g. Hermes/Codex CLIs) delay or buffer it, so the wake may fire late or not
    at all — verify with a live test.
+3. **Autonomous worker (optional, unattended).** `agentbridge-worker --host
+   <cursor|claude-code|codex>` replies for you via the host headless CLI. It is
+   autonomous (no live prompts) and, by default, governed by your host's EXISTING
+   allow/deny config. Add `--full-access` to grant everything or `--read-only` to
+   restrict it to replies only. Message content goes to a private `0600` temp file
+   (only its path is passed in argv); a failing message yields an
+   `[agentbridge-worker error] …` reply, gets acked, and the worker continues.
+   Cursor caveat: cursor headless has no allow-list-only switch, so its default
+   honors your deny list but auto-runs allowed actions (`--full-access` adds
+   `--force`).
 
 ## Steps (tool-loop)
 

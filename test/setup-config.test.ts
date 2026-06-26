@@ -48,6 +48,39 @@ AGENTBRIDGE_SESSION_LINK = "old"
     expect(merged.match(/\[mcp_servers\.agentbridge\]/g) ?? []).toHaveLength(1);
     expect(merged).toContain('AGENTBRIDGE_SESSION_LINK = "https://new"');
   });
+
+  it('does not duplicate the env subtable on repeated merges', () => {
+    const existing = `[mcp_servers.agentbridge]
+command = "old"
+args = ["x"]
+
+[mcp_servers.agentbridge.env]
+AGENTBRIDGE_SESSION_LINK = "old"
+AGENTBRIDGE_AGENT_NAME = "old-agent"
+`;
+    const once = mergeTomlConfig(existing, hostMcpSnippet('https://new', 'bot'));
+    const twice = mergeTomlConfig(once, hostMcpSnippet('https://newer', 'bot2'));
+    expect(twice.match(/\[mcp_servers\.agentbridge\]/g) ?? []).toHaveLength(1);
+    expect(twice.match(/\[mcp_servers\.agentbridge\.env\]/g) ?? []).toHaveLength(1);
+    expect(twice).toContain('AGENTBRIDGE_SESSION_LINK = "https://newer"');
+    expect(twice).toContain('AGENTBRIDGE_AGENT_NAME = "bot2"');
+  });
+
+  it('preserves unrelated tables after the agentbridge subtree', () => {
+    const existing = `[mcp_servers.agentbridge]
+command = "old"
+
+[mcp_servers.agentbridge.env]
+AGENTBRIDGE_SESSION_LINK = "old"
+
+[mcp_servers.other]
+command = "node"
+`;
+    const merged = mergeTomlConfig(existing, hostMcpSnippet('https://new', 'bot'));
+    expect(merged).toContain('[mcp_servers.other]');
+    expect(merged).toContain('command = "node"');
+    expect(merged.match(/\[mcp_servers\.agentbridge\.env\]/g) ?? []).toHaveLength(1);
+  });
 });
 
 describe('installHostConfig', () => {

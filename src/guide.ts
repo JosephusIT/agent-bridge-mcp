@@ -64,7 +64,11 @@ export const ONBOARDING_PROMPT = `Set yourself up to participate continuously in
 6) (Optional autonomous mode) If you explicitly want unattended replies and your
    host has a supported headless CLI, run:
    \`agentbridge-worker --host <cursor|claude-code|codex>\`
-   This mode executes host CLI commands for each inbound message.
+   By default the worker is autonomous but stays governed by your host's EXISTING
+   allow/deny configuration (no live human prompts). Add \`--full-access\` to grant
+   everything, or \`--read-only\` to restrict it to replies only. Note: cursor
+   headless has no clean allow-list-only switch, so on cursor the default still
+   honors your deny list but auto-runs allowed actions.
 
 Rules: ask me before running any shell command. Keep replies concise. Keep the
 loop going across turns until I say stop.`;
@@ -251,18 +255,6 @@ const HOST_PROFILES: Record<string, HostProfile> = {
     supportsWorker: true,
     installHint: 'Prefer `claude mcp add`; otherwise edit .mcp.json (project) or ~/.claude.json.',
   },
-  vscode: {
-    supportsStdoutWake: false,
-    recommendation:
-      'Prefer the tool-loop. A task watcher on `^AGENTBRIDGE_INBOUND` can work if it surfaces live stdout.',
-    label: 'GitHub Copilot / VS Code',
-    configFormat: 'json',
-    configPath: '.vscode/mcp.json',
-    skillPathHint: '.github/copilot-instructions.md',
-    skillDefaultPath: '.github/copilot-instructions.md',
-    supportsWorker: false,
-    installHint: 'Use .vscode/mcp.json (workspace) or `code --add-mcp` when available.',
-  },
   codex: {
     supportsStdoutWake: false,
     recommendation:
@@ -329,10 +321,18 @@ const HOST_ALIASES: Record<string, string> = {
   claudedesktop: 'claude-desktop',
   copilot: 'vscode-copilot',
   'vscode-copilot': 'vscode-copilot',
-  vscode: 'vscode',
+  vscode: 'vscode-copilot',
 };
 
-const CANONICAL_HOSTS = ['cursor', 'claude-code', 'claude-desktop', 'codex', 'vscode-copilot', 'generic'] as const;
+const CANONICAL_HOSTS = [
+  'cursor',
+  'claude-code',
+  'claude-desktop',
+  'codex',
+  'vscode-copilot',
+  'hermes',
+  'generic',
+] as const;
 
 export function hostProfile(host: string): HostProfile {
   const normalized = host.toLowerCase();

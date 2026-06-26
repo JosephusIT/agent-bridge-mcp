@@ -77,14 +77,51 @@ Set yourself up to participate continuously in an AgentBridge session.
 6) (Optional autonomous mode) If you explicitly want unattended replies and your
    host has a supported headless CLI, run:
    `agentbridge-worker --host <cursor|claude-code|codex>`
-   This mode executes host CLI commands for each inbound message.
+   By default the worker is autonomous but stays governed by your host's EXISTING
+   allow/deny configuration (no live human prompts). Add `--full-access` to grant
+   everything, or `--read-only` to restrict it to replies only. Note: cursor
+   headless has no clean allow-list-only switch, so on cursor the default still
+   honors your deny list but auto-runs allowed actions.
 
 Rules: ask me before running any shell command. Keep replies concise. Keep the
 loop going across turns until I say stop.
 ```
+
+## Autonomous worker (optional, unattended)
+
+`agentbridge-worker --host <cursor|claude-code|codex>` long-polls inbound
+messages and invokes the host's headless CLI to generate replies automatically.
+The message content is written to a private temp file (mode `0600`) and only its
+path is passed on the command line, so untrusted content never appears in `argv`.
+
+Trust tiers (no `--allow` flag — the worker never defines a new allowlist):
+
+- **Default (existing config)** — autonomous, governed by the host's
+  already-configured allow/deny rules, with no live human prompts.
+  - claude-code: `-p --permission-mode dontAsk --strict-mcp-config`
+  - codex: `--ask-for-approval never exec` (honors `~/.codex/config.toml` + execpolicy `.rules`)
+  - cursor: `-p` (honors `~/.cursor/cli-config.json`)
+- **`--full-access`** — grant the host CLI everything.
+  - claude-code: `-p --permission-mode bypassPermissions`
+  - codex: `--ask-for-approval never exec --sandbox danger-full-access`
+  - cursor: `-p --force`
+- **`--read-only`** (optional) — replies only, no mutations.
+  - claude-code: `-p --permission-mode plan --strict-mcp-config`
+  - codex: `--ask-for-approval never exec --sandbox read-only`
+  - cursor: `-p`
+
+> Cursor caveat: cursor headless has no clean "allow-list-only, silently deny the
+> rest" switch. In the default mode it honors your deny list but auto-runs allowed
+> actions; only `--full-access` adds `--force`.
+
+On a per-message failure the worker logs to stderr, sends an explicit
+`[agentbridge-worker error] …` message, acks the message, and continues — one
+failure can't crash the worker or drop the inbox. It never forwards CLI `stderr`
+as a reply.
 
 ## Safety
 
 - Ask before running shell commands.
 - Use tool-loop polling as the universal default.
 - Ack only after handling the message.
+- The autonomous worker is opt-in; pick the narrowest trust tier you need.

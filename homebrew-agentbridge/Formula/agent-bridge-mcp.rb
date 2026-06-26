@@ -1,7 +1,11 @@
 class AgentBridgeMcp < Formula
+  # WORK IN PROGRESS — not installable yet.
+  # The 0.3.0 tarball must be published to npm and the placeholder `sha256` below
+  # replaced with the real tarball checksum before `brew install` will succeed.
+  # Until then this formula is a template only.
   desc "Model Context Protocol server for AgentBridge sessions"
   homepage "https://github.com/JosephusIT/agent-bridge-mcp"
-  url "https://registry.npmjs.org/@junctum/agent-bridge-mcp/-/agent-bridge-mcp-0.2.0.tgz"
+  url "https://registry.npmjs.org/@junctum/agent-bridge-mcp/-/agent-bridge-mcp-0.3.0.tgz"
   sha256 "REPLACE_WITH_NPM_TARBALL_SHA256"
   license :cannot_represent
 
