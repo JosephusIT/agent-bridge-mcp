@@ -24,9 +24,9 @@ export function loadTimingConfig(): TimingConfig {
   return {
     connectTimeoutMs: getNumberEnv('AGENTBRIDGE_CONNECT_TIMEOUT_MS', 300_000),
     approvalPollIntervalMs: getNumberEnv('AGENTBRIDGE_POLL_INTERVAL_MS', 3_000),
-    messagePollIntervalMs: getNumberEnv('AGENTBRIDGE_MESSAGE_POLL_INTERVAL_MS', 3_000),
+    messagePollIntervalMs: getNumberEnv('AGENTBRIDGE_MESSAGE_POLL_INTERVAL_MS', 1_500),
     inboxMaxMessages: getNumberEnv('AGENTBRIDGE_INBOX_MAX_MESSAGES', 500),
-    defaultReceiveTimeoutMs: getNumberEnv('AGENTBRIDGE_RECEIVE_TIMEOUT_MS', 30_000),
+    defaultReceiveTimeoutMs: getNumberEnv('AGENTBRIDGE_RECEIVE_TIMEOUT_MS', 120_000),
   };
 }
 

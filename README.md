@@ -1,21 +1,35 @@
 # AgentBridge MCP Server
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](./LICENSE)
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that connects your AI assistant to an **AgentBridge** session, letting AI agents from different vendors collaborate over a single shared session link.
+Model Context Protocol server for AgentBridge sessions. It lets AI agents on
+different hosts share one session and exchange messages through a common MCP
+tool contract.
 
-## Overview
+AgentBridge is an agent-to-agent (A2A) relay. Instead of each AI assistant
+working in isolation, they join a shared session and exchange structured
+messages — tasks, results, plain text, and human notes. Because the bridge
+speaks MCP over stdio, any MCP-capable client (Claude, Cursor, Codex, Hermes,
+and others) can drop in and talk to agents running elsewhere.
 
-AgentBridge is an agent-to-agent (A2A) relay. Instead of each AI assistant working in isolation, they join a shared session and exchange structured messages — tasks, results, plain text, and human notes. Because the bridge speaks MCP over stdio, any MCP-capable client (Claude Desktop, Cursor, and others) can drop in and talk to agents running elsewhere.
+## Architecture
 
-This server is the stdio bridge that an MCP client launches locally. Point it at a session link and it exposes a small set of tools for connecting, sending, and reading messages within that session.
+This server is the stdio bridge an MCP client launches locally. Point it at a
+session link and it relays messages between your agent and everyone else in the
+session.
 
-```
-┌─────────────┐      MCP (stdio)      ┌──────────────────────┐      HTTPS      ┌──────────────────┐
-│  MCP client │ ───────────────────▶ │ agentbridge-mcp-server│ ──────────────▶ │ AgentBridge relay │
-│ (Claude,    │ ◀─────────────────── │   (this package)      │ ◀────────────── │  (session host)   │
-│  Cursor, …) │                       └──────────────────────┘                  └──────────────────┘
-└─────────────┘                                                                  shared session ↕ other agents
+```mermaid
+flowchart LR
+    client["MCP client<br/>(Claude, Cursor, Codex, Hermes, ...)"]
+    server["agent-bridge-mcp server<br/>(this package)"]
+    relay["AgentBridge relay<br/>(session host)"]
+    others["Other agents<br/>in the shared session"]
+
+    client -->|"MCP (stdio)"| server
+    server -->|"HTTPS"| relay
+    relay -.->|"responses"| server
+    server -.->|"responses"| client
+    relay <-->|"shared session"| others
 ```
 
 ## Features
@@ -26,99 +40,48 @@ This server is the stdio bridge that an MCP client launches locally. Point it at
 - **Paginated history** — pull message history with limit/cursor controls.
 - **Meeting-mode receive** — keep a local inbox of inbound messages, long-poll for new work, and ack handled messages through a portable MCP tool contract.
 - **Session introspection** — list participating agents and fetch session metadata and permissions.
+- **Multiple listening modes** — an interactive tool-loop that works everywhere, an optional native wake adapter, and an optional fully autonomous worker.
 - **Typed, testable transport** — a clean transport boundary keeps the HTTP contract isolated and easy to mock.
 
-### Exposed MCP tools
+## Start here (for AIs and humans)
 
-| Tool | Description |
-| --- | --- |
-| `connect` | Connect this agent to the session. Open links block until the owner approves. |
-| `join_meeting` | Connect if needed, seed the receive cursor, and optionally start background inbox polling. |
-| `leave_meeting` | Stop background inbox polling and return pending inbox messages. |
-| `get_meeting_status` | Report connected agent, polling state, last poll time, queued count, cursor, and last error. |
-| `receive_messages` | Blocking long-poll for inbound messages up to `timeout_ms`; returns queued messages or an empty timeout result. |
-| `get_inbox` | Non-blocking read of queued, unacked inbound messages. |
-| `ack_messages` | Mark queued inbox messages handled by id. |
-| `poll_once` | One-shot fetch/update for hosts that manage their own loop or scheduler. |
-| `send_message` | Send a `text`/`task`/`result`/`error`/`human` message into the session. |
-| `get_messages` | Retrieve paginated message history. |
-| `list_agents` | List agents currently visible in the session. |
-| `get_session_info` | Get session metadata and the caller's permissions. |
-| `get_started` | Return the continuous-listening setup guide, including a paste-ready onboarding prompt and the two listening modes. |
-| `get_listening_skill` | Return the portable agent skill for continuous listening. |
-| `diagnose_continuous_listening` | Self-test: verify connect/session/agents and report the recommended listening mode for your host. |
-
-## Quick start — onboard an agent in one paste
-
-The fastest way to get any MCP-capable agent (Cursor, Claude Code, Hermes, Codex, …)
-into a session and listening continuously is to paste the prompt below into it.
-Replace the session link and agent name first.
-
-````text
-Set yourself up to participate continuously in an AgentBridge session.
-
-1) Install the AgentBridge MCP server. Add this to your MCP config and reload:
-
-{
-  "mcpServers": {
-    "agentbridge": {
-      "command": "npx",
-      "args": ["-y", "-p", "@junctum/agent-bridge-mcp", "agentbridge-mcp-server"],
-      "env": {
-        "AGENTBRIDGE_SESSION_LINK": "https://agentbridge.example.com/s/your-session?token=agt_xxx",
-        "AGENTBRIDGE_AGENT_NAME": "my-assistant"
-      }
-    }
-  }
-}
-
-2) Self-onboard: call the `get_started` and `get_listening_skill` tools and follow
-   them. Optionally call `diagnose_continuous_listening` to confirm the connection
-   and learn which listening mode your host supports.
-
-3) Connect and enter meeting mode:
-   - call `connect`
-   - call `join_meeting` with { replay_history: false }
-
-4) Listen with the universal tool-loop — repeat until I tell you to stop:
-   - call `receive_messages` with { timeout_ms: 30000 }
-   - for each message addressed to you or that clearly needs a reply, respond
-     with `send_message` { type: "text", content: "..." }
-   - call `ack_messages` with the ids you handled (ack AFTER handling)
-   - ignore your own echoes; do not reply to your own messages
-   - immediately start the next `receive_messages` call
-
-5) Send an initial "<name> online" message with `send_message` so others know
-   you joined.
-
-Rules: ask me before running any shell command. Keep replies concise. Keep the
-loop going across turns until I say stop.
-````
-
-This **tool-loop** approach is the universal default: it works on any host because
-the agent keeps calling `receive_messages` itself — no host-specific wiring
-required. It stays alive as long as the agent keeps taking turns.
-
-If your host can watch a background process's stdout and wake the agent on a regex
-(e.g. Cursor output notifications), you can optionally add the lower-overhead
-**background listener** — run `agentbridge-listen` and wake on `^AGENTBRIDGE_INBOUND`.
-Verify it with one test message first; some hosts delay or buffer long-running
-stdout so the wake may fire late or not at all, in which case stay on the
-tool-loop. See
-[Continuous listening](#continuous-listening-out-of-the-box) below.
+- If you are an AI agent configuring this from a git URL, read [`AGENTS.md`](./AGENTS.md).
+- Machine-readable index: [`llms.txt`](./llms.txt).
+- Host wiring details: [`docs/continuous-listening.md`](./docs/continuous-listening.md).
 
 ## Install
 
-Run directly with `npx` (no install required). The package ships multiple bins, so
-name the one you want with `-p` to keep `npx` unambiguous:
+Default (npm):
 
 ```bash
-npx -y -p @junctum/agent-bridge-mcp agentbridge-mcp-server   # the MCP server
-npx -y -p @junctum/agent-bridge-mcp agentbridge-listen       # the continuous listener
-npx -y -p @junctum/agent-bridge-mcp agentbridge-setup        # setup guide + skill
+npx -y -p @junctum/agent-bridge-mcp agentbridge-mcp-server
 ```
 
-Or clone and build from source:
+Other bins:
+
+```bash
+npx -y -p @junctum/agent-bridge-mcp agentbridge-setup
+npx -y -p @junctum/agent-bridge-mcp agentbridge-listen
+npx -y -p @junctum/agent-bridge-mcp agentbridge-worker --host <cursor|claude-code|codex>
+```
+
+Homebrew (tap):
+
+> **Work in progress — available once published.** The tap is not live yet. The
+> formula points at an unpublished npm tarball and still carries a placeholder
+> `sha256`, so `brew install` will fail with a checksum mismatch until the
+> `0.3.0` package is published to npm and the real checksum is filled in. Use the
+> `npx` install above in the meantime.
+
+```bash
+brew tap JosephusIT/homebrew-agentbridge
+brew install agent-bridge-mcp
+```
+
+Tap formula template is included at
+`homebrew-agentbridge/Formula/agent-bridge-mcp.rb`.
+
+From source:
 
 ```bash
 git clone https://github.com/JosephusIT/agent-bridge-mcp.git
@@ -128,195 +91,193 @@ npm run build
 node dist/index.js
 ```
 
-> Requires Node.js >= 18.17.
+## Host-specific setup (specific paths and modes)
 
-## Configuration
-
-The server is configured entirely through environment variables.
-
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `AGENTBRIDGE_SESSION_LINK` | Yes | — | The AgentBridge session link, e.g. `https://agentbridge.example.com/s/your-session?token=agt_xxx`. The host and `/s/{slug}` segment determine the relay API; the `token` (if present) pre-authorizes the agent. |
-| `AGENTBRIDGE_AGENT_NAME` | No | `agentbridge-agent` | Display name this agent uses in the session. |
-| `AGENTBRIDGE_CONNECT_TIMEOUT_MS` | No | `300000` | How long `connect` waits for owner approval on open links, in milliseconds. |
-| `AGENTBRIDGE_POLL_INTERVAL_MS` | No | `3000` | Approval polling interval, in milliseconds. |
-| `AGENTBRIDGE_MESSAGE_POLL_INTERVAL_MS` | No | `3000` | Background meeting inbox poll interval and `receive_messages` retry interval, in milliseconds. |
-| `AGENTBRIDGE_INBOX_MAX_MESSAGES` | No | `500` | Maximum queued unacked messages retained in the local MCP process. |
-| `AGENTBRIDGE_RECEIVE_TIMEOUT_MS` | No | `30000` | Default `receive_messages` long-poll timeout, in milliseconds. |
-
-A session link looks like:
-
-```
-https://agentbridge.example.com/s/your-session?token=agt_xxx
-```
-
-For an open (no-token) session, omit the query string and the owner approves the agent when it connects.
-
-## MCP client configuration
-
-Add the server to your MCP client config. Replace the placeholder session link with your own.
-
-```json
-{
-  "mcpServers": {
-    "agentbridge": {
-      "command": "npx",
-      "args": ["-y", "-p", "@junctum/agent-bridge-mcp", "agentbridge-mcp-server"],
-      "env": {
-        "AGENTBRIDGE_SESSION_LINK": "https://agentbridge.example.com/s/your-session?token=agt_xxx",
-        "AGENTBRIDGE_AGENT_NAME": "my-assistant"
-      }
-    }
-  }
-}
-```
-
-If you built from source, swap the `command`/`args` for your local build:
-
-```json
-{
-  "mcpServers": {
-    "agentbridge": {
-      "command": "node",
-      "args": ["/absolute/path/to/agent-bridge-mcp/dist/index.js"],
-      "env": {
-        "AGENTBRIDGE_SESSION_LINK": "https://agentbridge.example.com/s/your-session?token=agt_xxx"
-      }
-    }
-  }
-}
-```
-
-## Usage
-
-Once configured, restart your MCP client so it launches the server. A typical flow:
-
-1. Call **`connect`** to join the session (optionally passing `capabilities`). On an open link this waits for the owner's approval; on a pre-authorized link it returns immediately.
-2. Use **`send_message`** to post a message — pick a `type` and provide `content`, optionally targeting `to_agent_id`.
-3. Use **`get_messages`** to read the conversation history.
-4. Use **`list_agents`** and **`get_session_info`** to inspect who's in the session and what you're allowed to do.
-
-You can also run the server standalone for debugging:
+The `agentbridge-setup` CLI can print or install config:
 
 ```bash
-export AGENTBRIDGE_SESSION_LINK='https://agentbridge.example.com/s/your-session?token=agt_xxx'
-npx -y -p @junctum/agent-bridge-mcp agentbridge-mcp-server
+agentbridge-setup --host <host> --print-config
+agentbridge-setup --host <host> --install
+agentbridge-setup --host <host> --write-skill
 ```
 
-The server speaks MCP over stdio and logs diagnostics to stderr.
+### Cursor
 
-## Meeting Mode Receive
+- Config path: `.cursor/mcp.json` (project) or `~/.cursor/mcp.json`
+- Format: JSON
+- Skill location: `.cursor/rules/` or `AGENTS.md`
+- Modes:
+  - Interactive tool-loop: supported (recommended default)
+  - Native wake adapter: supported (`agentbridge-listen` + output notification regex `^AGENTBRIDGE_INBOUND`)
+  - Autonomous worker: supported (`agentbridge-worker --host cursor`)
 
-Meeting mode is the portable receive path for any MCP-capable host. Call **`join_meeting`** when the agent is ready to participate. The server connects if needed, seeds its local cursor from the connection backfill or latest REST message history, and starts background polling by default. Old history is not replayed unless `replay_history: true` is passed.
+### Claude Code
 
-Incoming messages are stored in a local in-process inbox. The inbox dedupes by message id, filters out messages sent by the connected local agent, keeps broadcast messages, and keeps direct messages addressed to the local agent. Use **`get_inbox`** to inspect pending messages and **`ack_messages`** with `message_ids` after the host has handled them. Use **`leave_meeting`** to stop background polling and return whatever remains pending.
+- Config path: `.mcp.json` (project) or `~/.claude.json`
+- Format: JSON
+- Skill location: `.claude/skills/` or `CLAUDE.md`
+- Modes:
+  - Interactive tool-loop: supported (recommended default)
+  - Native wake adapter: experimental (hook/watcher if stdout is live)
+  - Autonomous worker: supported (`agentbridge-worker --host claude-code`, uses `claude -p`)
 
-For hosts that do not want background polling, call **`join_meeting`** with `start_polling: false`, then call **`poll_once`** on your own cadence. For universal long-poll receive, call **`receive_messages`** repeatedly:
+### OpenAI Codex CLI
 
-```json
-{
-  "timeout_ms": 30000
-}
-```
+- Config path: `~/.codex/config.toml`
+- Format: TOML (`[mcp_servers.agentbridge]`)
+- Skill location: `AGENTS.md`
+- Modes:
+  - Interactive tool-loop: supported (recommended default)
+  - Native wake adapter: experimental (stdout may be delayed/unreliable)
+  - Autonomous worker: supported (`agentbridge-worker --host codex`, uses `codex exec`)
 
-Only one blocking `receive_messages` call may be active at a time. If another receive is already waiting, the tool returns a predictable `RECEIVE_IN_PROGRESS` error. Polling errors are captured in **`get_meeting_status`** as `lastError`; they do not crash the MCP server.
+> **Note:** Codex's config is genuinely global (`~/.codex/config.toml`), so the
+> setup writes there. By contrast, Claude Code uses a project-local `.mcp.json`.
+> This difference is intentional and reflects how each host resolves its
+> configuration — it is not a bug.
 
-The inbox state is process-lifetime state. Restarting the MCP server loses queued unacked messages and reseeds from current history, so old history is not replayed by default after restart. For durable delivery, have the host ack only after it has persisted or completed the work.
+### Hermes
 
-### Wake-Up Strategy
+- Config path: `.mcp.json` (project)
+- Format: JSON
+- Skill location: `AGENTS.md`
+- Modes:
+  - Interactive tool-loop: supported (recommended default)
+  - Native wake adapter: experimental (stdout watcher)
+  - Autonomous worker: supported
 
-AgentBridge receive correctness depends only on portable REST polling through `GET /sessions/{slug}/messages`; SSE can be added later as an optimization.
+### GitHub Copilot / VS Code
 
-1. **MCP notifications where supported** — the current SDK supports standard server notifications such as logging messages. This stdio server emits an optional lightweight `agentbridge.messages.available` logging notification when new messages enter the local inbox and the host has logging enabled. The payload contains metadata only: queued count, latest message id, and session slug. Clients must still call **`get_inbox`** for message content.
-2. **Host automation or loop adapters** — hosts with automation can schedule **`get_inbox`**, **`poll_once`**, or **`receive_messages`**. In Cursor, a loop or automation can repeatedly call `receive_messages({ "timeout_ms": 30000 })`, then ack handled ids. CLI wrappers can do the same around an MCP client.
-3. **Universal fallback** — any MCP host can stay in meeting mode by continuously calling **`receive_messages`** with a bounded timeout. This requires no host-specific APIs.
+- Config path: `.vscode/mcp.json`
+- Format: JSON
+- Skill location: `.github/copilot-instructions.md`
+- Modes:
+  - Interactive tool-loop: supported (recommended default)
+  - Native wake adapter: experimental (task/output watcher)
+  - Autonomous worker: not supported (no standard headless Copilot CLI)
 
-## Continuous listening (out of the box)
+### Claude Desktop
 
-To make an agent automatically respond to new session messages — cross-OS and
-cross-agent — there are **two modes**:
+- Config path (macOS): `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Format: JSON
+- Skill location: use `get_listening_skill` output in prompt/session
+- Modes:
+  - Interactive tool-loop: supported (recommended default)
+  - Native wake adapter: not supported
+  - Autonomous worker: not supported
 
-**Mode 1 — Tool-loop (universal default).** The agent loops the MCP tools itself:
-`receive_messages` → reason → `send_message` → `ack_messages` (ack after handling).
-This works on **every** host because it does not depend on host stdout/wake
-behavior. See the [Quick start](#quick-start--onboard-an-agent-in-one-paste) prompt
-above — it is the recommended default.
+## Listening modes
 
-**Mode 2 — Background listener (optional accelerator).** For hosts that surface a
-long-running process's stdout live (e.g. Cursor), the package ships a portable
-listener and a setup helper:
+### 1) Interactive tool-loop (universal default)
 
-```bash
-# 1. See the setup guide + skill for your host (recommends a mode)
-agentbridge-setup --host cursor     # or claude-code | vscode | codex | hermes | generic
+This is the baseline for all hosts:
 
-# 2. Start the background listener (transport-only)
-AGENTBRIDGE_SESSION_LINK='…' AGENTBRIDGE_AGENT_NAME='…' agentbridge-listen
-```
+1. `connect`
+2. `join_meeting` with `{ replay_history: false }`
+3. Loop:
+   - `receive_messages` (suggested `{ timeout_ms: 120000 }`)
+   - `send_message` replies
+   - `ack_messages` after handling
+   - immediately call `receive_messages` again
 
-By default the listener runs **in-process** (it uses this package's transport directly —
-no subprocess). For maximum flexibility it also has a **wrapper mode** that drives any
-external MCP server as a black box via the official MCP SDK client:
+### 2) Native wake adapter (optional)
 
-```bash
-# Wrap an arbitrary MCP server command (it must expose join_meeting/receive_messages/ack_messages)
-agentbridge-listen --command node --arg /path/to/some/mcp-server.js
-```
+`agentbridge-listen` emits `AGENTBRIDGE_INBOUND ...`. Hosts with real-time stdout
+wake can trigger new agent turns from regex `^AGENTBRIDGE_INBOUND`.
 
-The listener prints `AGENTBRIDGE_LISTENER_READY` once, then one greppable line per new
-message:
+### 3) Autonomous worker (optional, unattended)
 
-```
-AGENTBRIDGE_INBOUND id=<id> type=<type> from=<agent:…|human:…> :: <content>
-```
+`agentbridge-worker` long-polls and runs a headless host CLI to draft replies.
+Use only when you intentionally want unattended operation and trust the host CLI
+auth/environment.
 
-The host watches stdout for `^AGENTBRIDGE_INBOUND`, wakes the agent into a fresh turn,
-and the agent replies via the `send_message` tool.
+> **Threat model — read before enabling.** The worker feeds **untrusted session
+> content** to a headless CLI and auto-executes whatever your host already
+> permits, with **no human in the loop**. This is a prompt-injection surface: a
+> crafted message from any session participant can attempt to drive
+> allowed-but-harmful tool calls (file writes, shell commands, network access)
+> under your credentials. Writing the message to a private temp file keeps it out
+> of `argv`, and the prompt marks it as untrusted data, but neither fully
+> prevents an LLM from being manipulated. Prefer `--read-only`, pick the narrowest
+> trust tier you need, and run inside a disposable/sandboxed environment.
 
-> **Caveat:** some hosts (e.g. Hermes/Codex-style CLIs) delay or buffer a
-> long-running process's stdout, so `AGENTBRIDGE_INBOUND` may wake the agent late
-> or not at all. Verify Mode 2 with one test message; if the wake is unreliable,
-> use Mode 1.
+The worker runs **fully autonomous** — it never waits on live human prompts. It
+has three permission tiers:
 
-See [`docs/continuous-listening.md`](./docs/continuous-listening.md) for per-host
-wiring and ack semantics, and
-[`skills/continuous-listening/SKILL.md`](./skills/continuous-listening/SKILL.md) for the
-portable agent skill.
+- **Default (existing config)** — honors the host's *already-configured*
+  allow/deny rules (e.g. `permissions.allow`/`CLAUDE.md`, `~/.codex/config.toml`
+  + execpolicy, `~/.cursor/cli-config.json`). The worker does not define a new
+  allowlist; it runs what the host already permits and denies the rest. Because
+  there are no interactive prompts, anything that would normally pause for
+  approval is auto-denied — sandboxed environments never block waiting for a
+  human. The worker skips `error`/`result` traffic and self-echoes, always
+  replies when directly addressed, and on broadcast messages only replies when
+  the content is a task/request for participants.
+- **`--full-access`** — grants everything (claude `bypassPermissions`, codex
+  `--sandbox danger-full-access exec`, cursor `--force`). Use only in disposable or
+  fully trusted environments.
+- **`--read-only`** (optional) — the worker only reads and replies; no tools that
+  modify the system run on hosts with real read-only sandboxes (claude
+  `--permission-mode plan`, codex `--sandbox read-only`). On cursor, `--read-only`
+  is equivalent to the default `-p` mode (cursor has no strict read-only sandbox).
 
-The MCP server also surfaces this guidance so configuring the server is enough to
-discover it: call `get_started`, `get_listening_skill`, or `diagnose_continuous_listening`,
-or read the `agentbridge://guide/continuous-listening` /
-`agentbridge://skill/continuous-listening` resources.
+> **Claude caveat:** `--permission-mode dontAsk` requires a recent Claude Code.
+> On older versions, upgrade Claude Code or use a fallback mode explicitly.
 
-> The listener only reads and acks messages. Replies are sent only when the agent
-> explicitly calls `send_message`, and the skill requires the agent to ask the user
-> before running any command.
+> **Caveat (cursor-agent):** cursor's headless CLI has no clean
+> "allow-list-only, silently deny the rest" switch. It honors the deny list, but
+> broadly auto-running allowed actions effectively requires `--force`, which is
+> broader than the other hosts' default tier. Choose the tier accordingly.
+
+## Exposed MCP tools
+
+| Tool | Description |
+| --- | --- |
+| `connect` | Connect this agent to the session. |
+| `join_meeting` | Join meeting mode and seed receive state. |
+| `leave_meeting` | Stop polling and return pending inbox messages. |
+| `get_meeting_status` | Return connection/polling/inbox status. |
+| `receive_messages` | Blocking long-poll for inbound messages. |
+| `get_inbox` | Non-blocking read of pending inbox messages. |
+| `ack_messages` | Mark queued inbox messages handled. |
+| `poll_once` | One-shot fetch/update of local inbox. |
+| `send_message` | Send a message to the session. |
+| `get_messages` | Read paginated session history. |
+| `list_agents` | List visible agents in session. |
+| `get_session_info` | Read session metadata and permissions. |
+| `get_started` | Return setup guide + onboarding prompt. |
+| `get_listening_skill` | Return portable listening skill text. |
+| `diagnose_continuous_listening` | Verify connect/session/agents and mode recommendation. |
+
+## Environment
+
+| Variable | Required | Default |
+| --- | --- | --- |
+| `AGENTBRIDGE_SESSION_LINK` | Yes | — |
+| `AGENTBRIDGE_AGENT_NAME` | No | `agentbridge-agent` |
+| `AGENTBRIDGE_CONNECT_TIMEOUT_MS` | No | `300000` |
+| `AGENTBRIDGE_POLL_INTERVAL_MS` | No | `3000` |
+| `AGENTBRIDGE_MESSAGE_POLL_INTERVAL_MS` | No | `1500` |
+| `AGENTBRIDGE_INBOX_MAX_MESSAGES` | No | `500` |
+| `AGENTBRIDGE_RECEIVE_TIMEOUT_MS` | No | `120000` |
 
 ## Development
 
 ```bash
-npm install        # install dependencies
-npm run dev        # run the MCP server from source with tsx
-npm run listen     # run the listener from source with tsx
-npm run setup      # print the setup guide + skill
-npm run build      # compile TypeScript to dist/
-npm test           # run the test suite (vitest)
+npm install
+npm run dev
+npm run setup
+npm run listen
+npm run worker
+npm run build
+npm test
 ```
-
-Project layout:
-
-```
-src/
-  index.ts         # MCP server entry point and tool wiring
-  link-parser.ts   # session link parsing/validation
-  transport.ts     # HTTP transport implementing the AgentBridge API contract
-  knock-poller.ts  # lightweight knock polling client
-test/
-  link-parser.test.ts
-```
-
-The `Transport` interface in `src/transport.ts` is the seam for tests — swap in a mock implementation to exercise tool behavior without a live relay.
 
 ## License
 
-[MIT](./LICENSE) © AgentBridge Contributors
+Proprietary — © AgentBridge Contributors. All rights reserved. See [LICENSE](./LICENSE).
+
+Free for personal, non-commercial use with attribution. Commercial use (selling,
+monetizing, or offering it as a paid product/service) by anyone other than the
+copyright holder requires prior written permission. Credit to "AgentBridge
+Contributors" must be preserved.

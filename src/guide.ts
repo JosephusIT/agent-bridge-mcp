@@ -16,6 +16,8 @@
 
 export const INBOUND_SENTINEL = 'AGENTBRIDGE_INBOUND';
 export const READY_SENTINEL = 'AGENTBRIDGE_LISTENER_READY';
+const CANONICAL_HOSTS = ['cursor', 'claude-code', 'claude-desktop', 'codex', 'vscode-copilot', 'hermes', 'generic'] as const;
+const HOST_CHOICES = CANONICAL_HOSTS.join('|');
 
 /**
  * Paste-ready onboarding prompt. An agent that receives this can configure the
@@ -49,17 +51,30 @@ export const ONBOARDING_PROMPT = `Set yourself up to participate continuously in
 
 4) Listen with the universal tool-loop (works on every host) — repeat until told
    to stop:
-   - call \`receive_messages\` with { timeout_ms: 30000 }
+   - call \`receive_messages\` with { timeout_ms: 120000 }
    - for each message addressed to you or that clearly needs a reply, respond
      with \`send_message\` { type: "text", content: "..." }
    - call \`ack_messages\` with the ids you actually handled (ack AFTER handling)
    - ignore your own echoes; do not reply to your own messages
-   - immediately start the next \`receive_messages\` call
+   - immediately start the next \`receive_messages\` call (do not wait for another prompt)
 
 5) (Optional acceleration) If your host can watch a background process's stdout
    and wake you on a regex, you may instead run the background listener and wake
    on \`^${INBOUND_SENTINEL}\`. Test it with one message: if no wake fires within
    one receive cycle, your host buffers stdout — stay on the tool-loop in step 4.
+
+6) (Optional autonomous mode) If you explicitly want unattended replies and your
+   host has a supported headless CLI, run:
+   \`agentbridge-worker --host <cursor|claude-code|codex>\`
+   By default the worker is autonomous but stays governed by your host's EXISTING
+   allow/deny configuration (no live human prompts). It skips noisy system traffic
+   (error/result and self-echoes), always replies when directly addressed, and on
+   broadcasts only replies when the content is a task/request for participants.
+   Add \`--full-access\` to grant everything. \`--read-only\` uses read-only
+   sandboxes on claude/codex; on cursor it is equivalent to default \`-p\` (no
+   strict read-only sandbox). Note: cursor headless has no clean allow-list-only
+   switch, so on cursor the default still honors your deny list but auto-runs
+   allowed actions.
 
 Rules: ask me before running any shell command. Keep replies concise. Keep the
 loop going across turns until I say stop.`;
@@ -85,6 +100,9 @@ ${ONBOARDING_PROMPT}
    \`${INBOUND_SENTINEL}\`. A host that watches that stdout (regex \`^${INBOUND_SENTINEL}\`)
    can wake the agent into a fresh turn. Lower overhead, but only reliable on
    hosts that surface a long-running process's stdout live (e.g. Cursor).
+3. **Autonomous worker (optional, unattended).** \`agentbridge-worker\` long-polls
+   messages and invokes a supported host headless CLI to generate replies
+   automatically. This is safety-sensitive; only enable it intentionally.
 
 > Why two modes: some hosts (e.g. certain CLIs) delay or buffer a long-running
 > process's stdout, so \`${INBOUND_SENTINEL}\` may wake the agent late or not at
@@ -97,7 +115,7 @@ ${ONBOARDING_PROMPT}
 2. Optionally confirm wiring and host capability:
 
    \`\`\`bash
-   npx -y -p @junctum/agent-bridge-mcp agentbridge-setup --host <cursor|claude-code|vscode|codex|hermes|generic> [--write]
+   npx -y -p @junctum/agent-bridge-mcp agentbridge-setup --host <${HOST_CHOICES}> [--write]
    \`\`\`
 
    Or call the \`diagnose_continuous_listening\` MCP tool, which verifies connect /
@@ -126,6 +144,8 @@ After setup, send one test message into the session and confirm:
 - **Hermes / Codex / other CLIs** — prefer the **tool-loop**; background stdout
   wake may be delayed or unreliable, so only enable the listener after a
   successful live test.
+- **Unattended operation** — use \`agentbridge-worker --host <cursor|claude-code|codex>\`
+  only when you explicitly want autonomous replies and trust the host CLI setup.
 
 ## Ack semantics
 
@@ -166,6 +186,14 @@ agents, or stay in a meeting.
   background process prints to stdout. Run \`agentbridge-listen\` and wake on
   \`^${INBOUND_SENTINEL}\`. Verify with one test message; if no wake fires, switch
   back to the tool-loop. Never assume it works without testing.
+- **Autonomous worker (optional).** Use \`agentbridge-worker --host ...\` only when
+  you intentionally want unattended replies via a headless host CLI. It skips
+  \`error\`/\`result\` traffic and self-echoes, always replies when directly
+  addressed, and on broadcasts only replies when content is a task/request for
+  participants. Add \`--full-access\` to grant everything. \`--read-only\` uses
+  strict read-only sandboxes on claude/codex; on cursor it is equivalent to
+  default \`-p\`. Cursor has no allow-list-only switch; Claude \`dontAsk\` requires
+  a recent Claude Code release.
 
 ## Steps (tool-loop)
 
@@ -174,11 +202,11 @@ agents, or stay in a meeting.
    approval. Never execute commands silently.
 2. **Connect** with \`connect\`, then \`join_meeting\` with { replay_history: false }.
 3. **Loop**:
-   - call \`receive_messages\` with { timeout_ms: 30000 }
+   - call \`receive_messages\` with { timeout_ms: 120000 }
    - for each message addressed to you or that clearly needs a reply, respond with
      \`send_message\` ({ type: 'text', content: '…' })
    - call \`ack_messages\` with the ids you handled — **ack after handling**, not before
-   - immediately start the next \`receive_messages\`
+   - immediately start the next \`receive_messages\` (no idle wait)
 4. **Stop** when the user is done (end the loop / terminate the listener).
 
 ## Rules
@@ -194,6 +222,22 @@ export interface HostProfile {
   supportsStdoutWake: boolean;
   /** One-line recommendation for this host. */
   recommendation: string;
+  /** Human-facing host label. */
+  label: string;
+  /** Config format used by the host's MCP config file. */
+  configFormat: 'json' | 'toml';
+  /** Primary config file path used by the host. */
+  configPath: string;
+  /** Optional alternative config path for project-local setup. */
+  projectConfigPath?: string;
+  /** Where to place host-level agent guidance/skills. */
+  skillPathHint: string;
+  /** Default file path to write the skill when --write-skill is used without a path. */
+  skillDefaultPath: string;
+  /** Whether autonomous worker mode is supported for this host. */
+  supportsWorker: boolean;
+  /** How to install MCP config for this host. */
+  installHint: string;
 }
 
 const HOST_PROFILES: Record<string, HostProfile> = {
@@ -201,36 +245,122 @@ const HOST_PROFILES: Record<string, HostProfile> = {
     supportsStdoutWake: true,
     recommendation:
       'Both modes work. The background listener + an output notification on `^AGENTBRIDGE_INBOUND` is a good fit.',
+    label: 'Cursor',
+    configFormat: 'json',
+    configPath: '~/.cursor/mcp.json',
+    projectConfigPath: '.cursor/mcp.json',
+    skillPathHint: '.cursor/rules/ or AGENTS.md',
+    skillDefaultPath: '.cursor/rules/agentbridge-continuous-listening.md',
+    supportsWorker: true,
+    installHint: 'Use .cursor/mcp.json (project) or ~/.cursor/mcp.json (global).',
   },
   'claude-code': {
     supportsStdoutWake: false,
     recommendation:
       'Prefer the tool-loop. Wire a hook/watcher on `^AGENTBRIDGE_INBOUND` only if your setup surfaces live stdout.',
-  },
-  vscode: {
-    supportsStdoutWake: false,
-    recommendation:
-      'Prefer the tool-loop. A task watcher on `^AGENTBRIDGE_INBOUND` can work if it surfaces live stdout.',
+    label: 'Claude Code',
+    configFormat: 'json',
+    configPath: '~/.claude.json',
+    projectConfigPath: '.mcp.json',
+    skillPathHint: '.claude/skills/ or CLAUDE.md',
+    skillDefaultPath: '.claude/skills/agentbridge-continuous-listening/SKILL.md',
+    supportsWorker: true,
+    installHint: 'Prefer `claude mcp add`; otherwise edit .mcp.json (project) or ~/.claude.json.',
   },
   codex: {
     supportsStdoutWake: false,
     recommendation:
       'Prefer the tool-loop. Codex-style CLIs may delay or buffer long-running stdout, so only enable the listener after a successful live test.',
+    label: 'OpenAI Codex CLI',
+    configFormat: 'toml',
+    configPath: '~/.codex/config.toml',
+    skillPathHint: 'AGENTS.md',
+    skillDefaultPath: 'AGENTS.md',
+    supportsWorker: true,
+    installHint: 'Edit ~/.codex/config.toml under [mcp_servers.agentbridge].',
   },
   hermes: {
     supportsStdoutWake: false,
     recommendation:
       'Prefer the tool-loop. On Hermes the stdout wake may fire but with delay/uncertainty, so only enable the listener after a successful live test.',
+    label: 'Hermes',
+    configFormat: 'json',
+    configPath: '.mcp.json',
+    skillPathHint: 'AGENTS.md',
+    skillDefaultPath: 'AGENTS.md',
+    supportsWorker: false,
+    installHint: 'Host-specific; use the generic JSON snippet and local host docs.',
+  },
+  'claude-desktop': {
+    supportsStdoutWake: false,
+    recommendation: 'Prefer the tool-loop. Claude Desktop has no first-class background wake primitive.',
+    label: 'Claude Desktop',
+    configFormat: 'json',
+    configPath: '~/Library/Application Support/Claude/claude_desktop_config.json',
+    skillPathHint: 'Use get_listening_skill output in your prompt/session',
+    skillDefaultPath: 'AGENTBRIDGE_LISTENING_SKILL.md',
+    supportsWorker: false,
+    installHint: 'Edit claude_desktop_config.json in Claude application support.',
+  },
+  'vscode-copilot': {
+    supportsStdoutWake: false,
+    recommendation:
+      'Prefer the tool-loop. A task watcher on `^AGENTBRIDGE_INBOUND` can work if it surfaces live stdout.',
+    label: 'GitHub Copilot / VS Code',
+    configFormat: 'json',
+    configPath: '.vscode/mcp.json',
+    skillPathHint: '.github/copilot-instructions.md',
+    skillDefaultPath: '.github/copilot-instructions.md',
+    supportsWorker: false,
+    installHint: 'Use .vscode/mcp.json (workspace) or `code --add-mcp` when available.',
   },
   generic: {
     supportsStdoutWake: false,
     recommendation:
       'Use the tool-loop unless you have proven your host wakes the agent on background stdout.',
+    label: 'Generic MCP host',
+    configFormat: 'json',
+    configPath: '.mcp.json',
+    skillPathHint: 'AGENTS.md',
+    skillDefaultPath: 'AGENTBRIDGE_LISTENING_SKILL.md',
+    supportsWorker: false,
+    installHint: 'Use local host docs for MCP config path and format.',
   },
 };
 
+const HOST_ALIASES: Record<string, string> = {
+  'claude desktop': 'claude-desktop',
+  claudedesktop: 'claude-desktop',
+  copilot: 'vscode-copilot',
+  'vscode-copilot': 'vscode-copilot',
+  vscode: 'vscode-copilot',
+};
+
 export function hostProfile(host: string): HostProfile {
-  return HOST_PROFILES[host.toLowerCase()] ?? HOST_PROFILES.generic;
+  const normalized = host.toLowerCase();
+  const key = HOST_ALIASES[normalized] ?? normalized;
+  return HOST_PROFILES[key] ?? HOST_PROFILES.generic;
+}
+
+export function supportedHosts(): string[] {
+  return [...CANONICAL_HOSTS];
+}
+
+export interface HostConfigSnippet {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+export function hostMcpSnippet(sessionLink = '<your session link>', agentName = '<your agent name>'): HostConfigSnippet {
+  return {
+    command: 'npx',
+    args: ['-y', '-p', '@junctum/agent-bridge-mcp', 'agentbridge-mcp-server'],
+    env: {
+      AGENTBRIDGE_SESSION_LINK: sessionLink,
+      AGENTBRIDGE_AGENT_NAME: agentName,
+    },
+  };
 }
 
 export function setupGuideForHost(host: string): string {

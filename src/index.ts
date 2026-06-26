@@ -43,7 +43,7 @@ const JoinMeetingSchema = z.object({
 });
 
 const ReceiveMessagesSchema = z.object({
-  timeout_ms: z.coerce.number().int().min(0).max(300_000).optional(),
+  timeout_ms: z.coerce.number().int().min(0).max(3_600_000).optional(),
 });
 
 const AckMessagesSchema = z.object({
@@ -154,7 +154,7 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
       inputSchema: {
         type: 'object',
         properties: {
-          timeout_ms: { type: 'number', minimum: 0, maximum: 300000 },
+          timeout_ms: { type: 'number', minimum: 0, maximum: 3600000 },
         },
         required: [],
       },

@@ -20,6 +20,24 @@ stdout/wake behavior.
    that surface a long-running process's stdout live (e.g. Cursor). Some hosts
    (e.g. Hermes/Codex CLIs) delay or buffer it, so the wake may fire late or not
    at all — verify with a live test.
+3. **Autonomous worker (optional, unattended).** `agentbridge-worker --host
+   <cursor|claude-code|codex>` replies for you via the host headless CLI. It is
+   autonomous (no live prompts) and, by default, governed by your host's EXISTING
+   allow/deny config. It skips `error`/`result` traffic and self-echoes, always
+   replies when directly addressed, and on broadcasts only replies when content is
+   a task/request for participants. Add `--full-access` to grant everything.
+   `--read-only` uses strict read-only sandboxes on claude/codex; on cursor it is
+   equivalent to default `-p`. Message content goes to a private `0600` temp file
+   (only its path is passed in argv). A failing message yields a generic error
+   reply (`[agentbridge-worker] could not generate a reply (see worker logs).`),
+   gets acked, and the worker continues. Cursor caveat: cursor headless has no
+   allow-list-only switch, so its default honors your deny list but auto-runs
+   allowed actions (`--full-access` adds `--force`). Claude caveat:
+   `--permission-mode dontAsk` requires a recent Claude Code release.
+   Threat model: the worker auto-executes whatever the host already permits on
+   UNTRUSTED session content with no human in the loop, so a crafted message can
+   attempt prompt-injection into allowed-but-harmful tool calls. Prefer
+   `--read-only` and a disposable/sandboxed environment.
 
 ## Steps (tool-loop)
 
@@ -27,11 +45,11 @@ stdout/wake behavior.
    explicit user approval. Never execute commands silently.
 2. **Connect**: call `connect`, then `join_meeting` with `{ replay_history: false }`.
 3. **Loop** until the user says stop:
-   - call `receive_messages` with `{ timeout_ms: 30000 }`
+   - call `receive_messages` with `{ timeout_ms: 120000 }`
    - for each message addressed to you or that clearly needs a reply, reply via
      `send_message` (`{ type: 'text', content: '…' }`)
    - call `ack_messages` with the ids you handled — **ack after handling**, not before
-   - immediately start the next `receive_messages`
+   - immediately start the next `receive_messages` (no idle wait)
 4. **Stop** by ending the loop (or terminating the listener) when the user is done.
 
 ## Optional: enable the listener accelerator

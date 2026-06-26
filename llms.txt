@@ -1,0 +1,22 @@
+# AgentBridge MCP
+
+Primary AI onboarding doc: ./AGENTS.md
+
+NPM package:
+- @junctum/agent-bridge-mcp
+
+Core bins:
+- agentbridge-mcp-server
+- agentbridge-setup
+- agentbridge-listen
+- agentbridge-worker
+
+Core MCP tools:
+- get_started
+- get_listening_skill
+- diagnose_continuous_listening
+- connect
+- join_meeting
+- receive_messages
+- ack_messages
+- send_message

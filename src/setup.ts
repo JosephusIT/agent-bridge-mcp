@@ -1,16 +1,20 @@
 #!/usr/bin/env node
 /**
  * agentbridge-setup — prints continuous-listening setup guidance and the
- * portable agent skill, and can write the skill to a file for your host.
+ * portable agent skill, and can print/install host-specific MCP config.
  *
- *   agentbridge-setup [--host <cursor|claude-code|vscode|codex|hermes|generic>]
- *                     [--skill] [--write [path]]
+ *   agentbridge-setup [--host <cursor|claude-code|claude-desktop|codex|vscode-copilot|hermes|generic>]
+ *                     [--skill] [--write-skill [path]]
+ *                     [--print-config] [--install] [--config-path <path>]
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, resolve } from 'node:path';
 
-import { LISTENING_SKILL, setupGuideForHost } from './guide.js';
+import type { HostConfigSnippet, HostProfile } from './guide.js';
+import { hostMcpSnippet, hostProfile, LISTENING_SKILL, setupGuideForHost, supportedHosts } from './guide.js';
+import { installHostConfig, mergeJsonConfig, renderTomlAgentbridgeBlock, resolveTargetPath } from './setup-config.js';
 
 function getFlagValue(argv: string[], flag: string): string | undefined {
   const idx = argv.indexOf(flag);
@@ -20,18 +24,74 @@ function getFlagValue(argv: string[], flag: string): string | undefined {
   return next;
 }
 
+function writeSkill(argv: string[], profile: HostProfile): void {
+  const rawTarget = getFlagValue(argv, '--write-skill') || getFlagValue(argv, '--write') || profile.skillDefaultPath;
+  const target = rawTarget.startsWith('~/') ? resolve(homedir(), rawTarget.slice(2)) : rawTarget;
+  mkdirSync(dirname(target) === '' ? '.' : dirname(target), { recursive: true });
+  writeFileSync(target, LISTENING_SKILL, 'utf8');
+  console.log(`Wrote listening skill to ${target}`);
+}
+
+function printConfig(profile: HostProfile, snippet: HostConfigSnippet, configPathOverride?: string): void {
+  const targetPath = resolveTargetPath(profile, { override: configPathOverride });
+  console.log(`# Host: ${profile.label}`);
+  console.log(`# Config format: ${profile.configFormat}`);
+  console.log(`# Target path: ${targetPath}`);
+  console.log(`# Install hint: ${profile.installHint}`);
+  console.log(`# Skill location: ${profile.skillPathHint}`);
+  console.log('');
+  const rendered = profile.configFormat === 'json' ? mergeJsonConfig(null, snippet) : renderTomlAgentbridgeBlock(snippet);
+  console.log(rendered.trimEnd());
+}
+
+function installConfig(host: string, profile: HostProfile, snippet: HostConfigSnippet, configPathOverride?: string): void {
+  const writesProjectConfig = configPathOverride ? !isAbsolute(configPathOverride) : Boolean(profile.projectConfigPath);
+  const sessionLink = snippet.env.AGENTBRIDGE_SESSION_LINK ?? '';
+  const hasRealSessionLink = sessionLink.trim().length > 0 && sessionLink !== '<your session link>';
+  if (writesProjectConfig && hasRealSessionLink) {
+    console.warn(
+      'Warning: writing AGENTBRIDGE_SESSION_LINK into a project config file. Treat this as sensitive and avoid committing it.'
+    );
+  }
+  const result = installHostConfig({ host, profile, snippet, configPathOverride });
+  console.log('\n---\n');
+  console.log(`Installed MCP config at ${result.path}`);
+  if (result.backupPath) console.log(`Backup written to ${result.backupPath}`);
+  console.log(result.created ? 'Created new config file.' : 'Updated existing config file.');
+}
+
+function printDefaultGuide(host: string): void {
+  console.log(setupGuideForHost(host));
+  console.log('\nSupported hosts:\n');
+  supportedHosts().forEach((name) => {
+    const p = hostProfile(name);
+    console.log(`- ${name}: ${p.configPath} (${p.configFormat})`);
+  });
+  console.log('\n---\n');
+  console.log(LISTENING_SKILL);
+}
+
 function main(): void {
   const argv = process.argv.slice(2);
   const host = getFlagValue(argv, '--host') || 'generic';
   const skillOnly = argv.includes('--skill');
-  const wantsWrite = argv.includes('--write');
+  const wantsWriteSkill = argv.includes('--write-skill') || argv.includes('--write');
+  const wantsPrintConfig = argv.includes('--print-config');
+  const wantsInstall = argv.includes('--install');
+  const configPathOverride = getFlagValue(argv, '--config-path');
+  const sessionLink = getFlagValue(argv, '--session-link') || '<your session link>';
+  const agentName = getFlagValue(argv, '--agent-name') || '<your agent name>';
 
-  if (wantsWrite) {
-    const target = getFlagValue(argv, '--write') || 'AGENTBRIDGE_LISTENING_SKILL.md';
-    mkdirSync(dirname(target) === '' ? '.' : dirname(target), { recursive: true });
-    writeFileSync(target, LISTENING_SKILL, 'utf8');
-    console.log(`Wrote listening skill to ${target}`);
-    return;
+  const profile = hostProfile(host);
+  const genericProfile = hostProfile('generic');
+  if (host.toLowerCase() !== 'generic' && profile === genericProfile) {
+    console.warn(`Warning: unknown --host "${host}", falling back to generic profile.`);
+  }
+  const snippet = hostMcpSnippet(sessionLink, agentName);
+
+  if (wantsWriteSkill) {
+    writeSkill(argv, profile);
+    if (!wantsPrintConfig && !wantsInstall && !skillOnly) return;
   }
 
   if (skillOnly) {
@@ -39,9 +99,13 @@ function main(): void {
     return;
   }
 
-  console.log(setupGuideForHost(host));
-  console.log('\n---\n');
-  console.log(LISTENING_SKILL);
+  if (wantsPrintConfig || wantsInstall) {
+    printConfig(profile, snippet, configPathOverride);
+    if (wantsInstall) installConfig(host, profile, snippet, configPathOverride);
+    return;
+  }
+
+  printDefaultGuide(host);
 }
 
 main();
