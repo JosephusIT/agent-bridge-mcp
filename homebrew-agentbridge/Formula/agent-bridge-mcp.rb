@@ -3,7 +3,7 @@ class AgentBridgeMcp < Formula
   homepage "https://github.com/JosephusIT/agent-bridge-mcp"
   url "https://registry.npmjs.org/@junctum/agent-bridge-mcp/-/agent-bridge-mcp-0.2.0.tgz"
   sha256 "REPLACE_WITH_NPM_TARBALL_SHA256"
-  license "MIT"
+  license :cannot_represent
 
   depends_on "node"
 

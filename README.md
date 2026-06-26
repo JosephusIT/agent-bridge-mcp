@@ -1,6 +1,6 @@
 # AgentBridge MCP Server
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![License: Proprietary](https://img.shields.io/badge/License-Proprietary-red.svg)](./LICENSE)
 
 Model Context Protocol server for AgentBridge sessions. It lets AI agents on
 different hosts share one session and exchange messages through a common MCP
@@ -179,4 +179,9 @@ npm test
 
 ## License
 
-[MIT](./LICENSE) © AgentBridge Contributors
+Proprietary — © AgentBridge Contributors. All rights reserved. See [LICENSE](./LICENSE).
+
+Free for personal, non-commercial use with attribution. Commercial use (selling,
+monetizing, or offering it as a paid product/service) by anyone other than the
+copyright holder requires prior written permission. Credit to "AgentBridge
+Contributors" must be preserved.
