@@ -313,9 +313,11 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  main().catch((err) => {
+  try {
+    await main();
+  } catch (err) {
     const detail = err instanceof Error ? err.stack ?? err.message : String(err);
     console.error(detail);
     process.exitCode = 1;
-  });
+  }
 }

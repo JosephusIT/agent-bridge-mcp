@@ -98,6 +98,18 @@ function isAgentbridgeTableName(name: string): boolean {
   return name === 'mcp_servers.agentbridge' || name.startsWith('mcp_servers.agentbridge.');
 }
 
+function parseTomlHeaderTableName(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('[')) return null;
+  const end = trimmed.indexOf(']');
+  if (end <= 1) return null;
+  const tableName = trimmed.slice(1, end).trim();
+  if (!tableName) return null;
+  const rest = trimmed.slice(end + 1).trim();
+  if (rest.length > 0 && !rest.startsWith('#')) return null;
+  return tableName;
+}
+
 /**
  * Remove every line that belongs to the `[mcp_servers.agentbridge]` table or any
  * of its child tables (`[mcp_servers.agentbridge.*]`, e.g. the `env` subtable).
@@ -109,13 +121,11 @@ function isAgentbridgeTableName(name: string): boolean {
  * when we reach a header that is NOT a child of `mcp_servers.agentbridge`.
  */
 function stripAgentbridgeTables(text: string): string {
-  const headerRe = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$/;
   const kept: string[] = [];
   let skipping = false;
   for (const line of text.split('\n')) {
-    const header = headerRe.exec(line);
-    if (header) {
-      const tableName = header[1].trim();
+    const tableName = parseTomlHeaderTableName(line);
+    if (tableName) {
       if (isAgentbridgeTableName(tableName)) {
         skipping = true;
         continue;
