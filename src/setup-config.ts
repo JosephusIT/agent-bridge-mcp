@@ -64,7 +64,7 @@ export function mergeJsonConfig(existingText: string | null, snippet: HostConfig
 }
 
 function tomlValue(value: string): string {
-  const escaped = value.replaceAll(/\\/g, String.raw`\\`).replaceAll('"', String.raw`\"`);
+  const escaped = value.replaceAll('\\', String.raw`\\`).replaceAll('"', String.raw`\"`);
   return `"${escaped}"`;
 }
 
