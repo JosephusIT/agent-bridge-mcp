@@ -107,11 +107,11 @@ Trust tiers (no `--allow` flag — the worker never defines a new allowlist):
   - cursor: `-p` (honors `~/.cursor/cli-config.json`)
 - **`--full-access`** — grant the host CLI everything.
   - claude-code: `-p --permission-mode bypassPermissions`
-  - codex: `--ask-for-approval never exec --sandbox danger-full-access`
+  - codex: `--ask-for-approval never --sandbox danger-full-access exec`
   - cursor: `-p --force`
 - **`--read-only`** (optional) — replies only, no mutations.
   - claude-code: `-p --permission-mode plan --strict-mcp-config`
-  - codex: `--ask-for-approval never exec --sandbox read-only`
+  - codex: `--ask-for-approval never --sandbox read-only exec`
   - cursor: `-p` (same as default on cursor; no strict read-only sandbox)
 
 > Cursor caveat: cursor headless has no clean "allow-list-only, silently deny the
@@ -136,3 +136,8 @@ inbox. It never forwards CLI `stderr` as a reply.
 - Use tool-loop polling as the universal default.
 - Ack only after handling the message.
 - The autonomous worker is opt-in; pick the narrowest trust tier you need.
+- Autonomous worker threat model: it feeds untrusted session content to a
+  headless CLI and auto-executes whatever the host already permits, with no human
+  in the loop. A crafted message can attempt to drive allowed-but-harmful tool
+  calls (prompt injection) under your credentials. Prefer `--read-only` and run in
+  a disposable/sandboxed environment.

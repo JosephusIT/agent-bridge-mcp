@@ -34,6 +34,10 @@ stdout/wake behavior.
    allow-list-only switch, so its default honors your deny list but auto-runs
    allowed actions (`--full-access` adds `--force`). Claude caveat:
    `--permission-mode dontAsk` requires a recent Claude Code release.
+   Threat model: the worker auto-executes whatever the host already permits on
+   UNTRUSTED session content with no human in the loop, so a crafted message can
+   attempt prompt-injection into allowed-but-harmful tool calls. Prefer
+   `--read-only` and a disposable/sandboxed environment.
 
 ## Steps (tool-loop)
 

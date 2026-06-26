@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildHeadlessCommand, decideDispatch, handleMessage, parseWorkerArgs, workerPrompt } from '../src/worker.js';
+import { buildHeadlessCommand, decideDispatch, handleMessage, parseWorkerArgs, startupWarnings, workerPrompt } from '../src/worker.js';
 import type { AgentBridgeSession, Message, SendMessageInput } from '../src/transport.js';
 
 const baseMessage: Message = {
@@ -65,11 +65,11 @@ describe('buildHeadlessCommand', () => {
     });
     expect(buildHeadlessCommand('codex', 'x', 'full-access')).toEqual({
       command: 'codex',
-      args: ['--ask-for-approval', 'never', 'exec', '--sandbox', 'danger-full-access', 'x'],
+      args: ['--ask-for-approval', 'never', '--sandbox', 'danger-full-access', 'exec', 'x'],
     });
     expect(buildHeadlessCommand('codex', 'x', 'read-only')).toEqual({
       command: 'codex',
-      args: ['--ask-for-approval', 'never', 'exec', '--sandbox', 'read-only', 'x'],
+      args: ['--ask-for-approval', 'never', '--sandbox', 'read-only', 'exec', 'x'],
     });
   });
 
@@ -162,6 +162,39 @@ describe('handleMessage', () => {
 
     expect(sendMessage).not.toHaveBeenCalled();
     expect(ack).toHaveBeenCalledWith({ messageIds: ['m1'] });
+  });
+
+  it('suppresses empty replies on the unconditional (directed) path and still acks', async () => {
+    const sendMessage = vi.fn<[AgentBridgeSession, SendMessageInput], Promise<Message>>().mockResolvedValue(baseMessage);
+    const ack = vi.fn();
+    const runner = vi.fn().mockResolvedValue('   ');
+
+    await handleMessage(baseMessage, flags, session, { sendMessage, ack }, runner, {
+      conditional: false,
+      selfName: 'bot',
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(ack).toHaveBeenCalledWith({ messageIds: ['m1'] });
+  });
+});
+
+describe('startupWarnings', () => {
+  const base = { once: true, replay: false, dryRun: false } as const;
+
+  it('warns that --read-only is a no-op on cursor', () => {
+    const warnings = startupWarnings({ ...base, host: 'cursor', mode: 'read-only' });
+    expect(warnings.some((w) => w.includes('cursor has no strict read-only sandbox'))).toBe(true);
+  });
+
+  it('emits the autonomous-execution security warning for non-read-only live runs', () => {
+    const warnings = startupWarnings({ ...base, host: 'codex', mode: 'existing' });
+    expect(warnings.some((w) => w.includes('SECURITY WARNING'))).toBe(true);
+  });
+
+  it('stays quiet for read-only on a sandboxed host and for dry-run', () => {
+    expect(startupWarnings({ ...base, host: 'claude-code', mode: 'read-only' })).toEqual([]);
+    expect(startupWarnings({ ...base, host: 'codex', mode: 'existing', dryRun: true })).toEqual([]);
   });
 });
 

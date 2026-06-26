@@ -138,10 +138,13 @@ export function buildHeadlessCommand(host: WorkerHost, prompt: string, mode: Wor
       return { command: 'claude', args: byMode[mode] };
     }
     case 'codex': {
+      // `--ask-for-approval` and `--sandbox` are global flags that must precede
+      // the `exec` subcommand (the exec parser rejects `--ask-for-approval`
+      // after it), so keep both before `exec`.
       const byMode: Record<WorkerMode, string[]> = {
         existing: ['--ask-for-approval', 'never', 'exec', prompt],
-        'full-access': ['--ask-for-approval', 'never', 'exec', '--sandbox', 'danger-full-access', prompt],
-        'read-only': ['--ask-for-approval', 'never', 'exec', '--sandbox', 'read-only', prompt],
+        'full-access': ['--ask-for-approval', 'never', '--sandbox', 'danger-full-access', 'exec', prompt],
+        'read-only': ['--ask-for-approval', 'never', '--sandbox', 'read-only', 'exec', prompt],
       };
       return { command: 'codex', args: byMode[mode] };
     }
@@ -175,7 +178,7 @@ async function runHeadlessCommand(host: WorkerHost, message: Message, mode: Work
       maxBuffer: 2 * 1024 * 1024,
     });
     const out = stdout?.trim();
-    return out && out.length > 0 ? out : '(no output)';
+    return out && out.length > 0 ? out : '';
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -208,7 +211,7 @@ export async function handleMessage(
       ? `[dry-run ${flags.host}] ${compactMessageContent(message.content)}`
       : await runner(flags.host, message, flags.mode, { conditional, selfName });
     const trimmed = reply.trim();
-    if (conditional && (trimmed.length === 0 || trimmed === NO_REPLY_SENTINEL)) {
+    if (trimmed.length === 0 || trimmed === NO_REPLY_SENTINEL) {
       deps.ack({ messageIds: [message.id] });
       return;
     }
@@ -248,8 +251,32 @@ export function decideDispatch(message: Message, selfId: string | null): Dispatc
   return { shouldHandle: false, conditional: false };
 }
 
+/**
+ * Build the safety warnings for a given set of worker flags. Returned as plain
+ * strings (no side effects) so the messaging stays testable.
+ */
+export function startupWarnings(flags: WorkerFlags): string[] {
+  const warnings: string[] = [];
+  if (flags.host === 'cursor' && flags.mode === 'read-only') {
+    warnings.push(
+      '[agentbridge-worker] WARNING: cursor has no strict read-only sandbox. ' +
+        '--read-only behaves like the default `-p` mode here, so allowed tools can still run and mutate state.'
+    );
+  }
+  if (flags.mode !== 'read-only' && !flags.dryRun) {
+    warnings.push(
+      '[agentbridge-worker] SECURITY WARNING: running in autonomous mode. The worker feeds UNTRUSTED session ' +
+        'content to the host CLI and auto-executes whatever your host already permits — with no human in the loop. ' +
+        'A crafted message can drive allowed-but-harmful tool calls (prompt injection). ' +
+        'Prefer --read-only and/or run inside a disposable, sandboxed environment.'
+    );
+  }
+  return warnings;
+}
+
 async function main(): Promise<void> {
   const flags = parseWorkerArgs(argv.slice(2));
+  for (const warning of startupWarnings(flags)) console.error(warning);
   const timing = loadTimingConfig();
   const session = loadSessionFromEnv();
   const transport = new HttpTransport();

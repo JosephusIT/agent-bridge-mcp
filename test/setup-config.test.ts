@@ -130,4 +130,44 @@ describe('installHostConfig', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('writes a TOML config, backs up, and stays idempotent on repeated installs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ab-setup-toml-'));
+    try {
+      const target = join(dir, 'config.toml');
+      writeFileSync(target, '[mcp_servers.other]\ncommand = "node"\n', 'utf8');
+      const profile = hostProfile('codex');
+      expect(profile.configFormat).toBe('toml');
+
+      const first = installHostConfig({
+        host: 'codex',
+        profile,
+        snippet: hostMcpSnippet('https://x', 'a'),
+        configPathOverride: target,
+        now: () => new Date('2026-01-01T00:00:00.000Z'),
+      });
+      expect(first.path).toBe(target);
+      expect(first.backupPath).toBeDefined();
+
+      const afterFirst = readFileSync(target, 'utf8');
+      expect(afterFirst).toContain('[mcp_servers.other]');
+      expect(afterFirst).toContain('[mcp_servers.agentbridge]');
+      expect(afterFirst).toContain('AGENTBRIDGE_AGENT_NAME = "a"');
+
+      installHostConfig({
+        host: 'codex',
+        profile,
+        snippet: hostMcpSnippet('https://y', 'b'),
+        configPathOverride: target,
+        now: () => new Date('2026-01-02T00:00:00.000Z'),
+      });
+      const afterSecond = readFileSync(target, 'utf8');
+      expect(afterSecond.match(/\[mcp_servers\.agentbridge\]/g) ?? []).toHaveLength(1);
+      expect(afterSecond.match(/\[mcp_servers\.agentbridge\.env\]/g) ?? []).toHaveLength(1);
+      expect(afterSecond).toContain('AGENTBRIDGE_AGENT_NAME = "b"');
+      expect(afterSecond).toContain('[mcp_servers.other]');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

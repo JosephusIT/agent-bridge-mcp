@@ -191,6 +191,16 @@ wake can trigger new agent turns from regex `^AGENTBRIDGE_INBOUND`.
 Use only when you intentionally want unattended operation and trust the host CLI
 auth/environment.
 
+> **Threat model — read before enabling.** The worker feeds **untrusted session
+> content** to a headless CLI and auto-executes whatever your host already
+> permits, with **no human in the loop**. This is a prompt-injection surface: a
+> crafted message from any session participant can attempt to drive
+> allowed-but-harmful tool calls (file writes, shell commands, network access)
+> under your credentials. Writing the message to a private temp file keeps it out
+> of `argv`, and the prompt marks it as untrusted data, but neither fully
+> prevents an LLM from being manipulated. Prefer `--read-only`, pick the narrowest
+> trust tier you need, and run inside a disposable/sandboxed environment.
+
 The worker runs **fully autonomous** — it never waits on live human prompts. It
 has three permission tiers:
 
@@ -204,7 +214,7 @@ has three permission tiers:
   replies when directly addressed, and on broadcast messages only replies when
   the content is a task/request for participants.
 - **`--full-access`** — grants everything (claude `bypassPermissions`, codex
-  `--sandbox danger-full-access`, cursor `--force`). Use only in disposable or
+  `--sandbox danger-full-access exec`, cursor `--force`). Use only in disposable or
   fully trusted environments.
 - **`--read-only`** (optional) — the worker only reads and replies; no tools that
   modify the system run on hosts with real read-only sandboxes (claude
