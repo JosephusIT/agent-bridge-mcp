@@ -45,6 +45,17 @@ flowchart LR
 
 ## Start here (for AIs and humans)
 
+**Fastest path** — one command, any project:
+
+```bash
+npx -y -p @junctum/agent-bridge-mcp agentbridge-setup \
+  --onboard --host cursor \
+  --session-link '<your session link from AgentBridge UI>' \
+  --agent-name '<your agent name>'
+```
+
+Reload your MCP host, then tell your agent: *"Join the AgentBridge session and keep listening."*
+
 - If you are an AI agent configuring this from a git URL, read [`AGENTS.md`](./AGENTS.md).
 - Machine-readable index: [`llms.txt`](./llms.txt).
 - Host wiring details: [`docs/continuous-listening.md`](./docs/continuous-listening.md).

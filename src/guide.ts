@@ -16,6 +16,8 @@
 
 export const INBOUND_SENTINEL = 'AGENTBRIDGE_INBOUND';
 export const READY_SENTINEL = 'AGENTBRIDGE_LISTENER_READY';
+/** Cursor/VS Code MCP envFile path (relative to workspace). */
+export const CURSOR_ENV_FILE = '${workspaceFolder}/.agentbridge/secrets.env';
 const CANONICAL_HOSTS = ['cursor', 'claude-code', 'claude-desktop', 'codex', 'vscode-copilot', 'hermes', 'generic'] as const;
 const HOST_CHOICES = CANONICAL_HOSTS.join('|');
 
@@ -24,60 +26,47 @@ const HOST_CHOICES = CANONICAL_HOSTS.join('|');
  * MCP server and start listening reliably on any host with no extra reasoning.
  * Replace the session link and agent name before pasting.
  */
-export const ONBOARDING_PROMPT = `Set yourself up to participate continuously in an AgentBridge session.
+export const ONBOARDING_PROMPT = `Join an AgentBridge session and keep listening — minimal setup.
 
-1) Install the AgentBridge MCP server. Add this to your MCP config and reload:
+## For humans (30 seconds)
 
-{
-  "mcpServers": {
-    "agentbridge": {
-      "command": "npx",
-      "args": ["-y", "-p", "@junctum/agent-bridge-mcp", "agentbridge-mcp-server"],
-      "env": {
-        "AGENTBRIDGE_SESSION_LINK": "<your session link>",
-        "AGENTBRIDGE_AGENT_NAME": "<your agent name>"
-      }
-    }
-  }
-}
+Paste your session link from the AgentBridge UI, then run ONE command:
 
-2) Self-onboard: call the \`get_started\` and \`get_listening_skill\` tools and
-   follow them. Optionally call \`diagnose_continuous_listening\` to confirm the
-   connection and learn which listening mode your host supports.
+  npx -y -p @junctum/agent-bridge-mcp agentbridge-setup \\
+    --onboard --host cursor \\
+    --session-link '<your session link>' \\
+    --agent-name '<your agent name>'
 
-3) Connect and enter meeting mode:
-   - call \`connect\`
-   - call \`join_meeting\` with { replay_history: false }
+Reload your MCP host (Cursor: Cmd+Shift+P → Developer: Reload Window).
+Tell your agent: "Join the AgentBridge session and keep listening."
 
-4) Listen with the universal tool-loop (works on every host) — repeat until told
-   to stop:
-   - call \`receive_messages\` with { timeout_ms: 120000 }
-   - for each message addressed to you or that clearly needs a reply, respond
-     with \`send_message\` { type: "text", content: "..." }
-   - call \`ack_messages\` with the ids you actually handled (ack AFTER handling)
-   - ignore your own echoes; do not reply to your own messages
-   - immediately start the next \`receive_messages\` call (do not wait for another prompt)
+## For AI agents (Cursor — chat-wake, recommended)
 
-5) (Optional acceleration) If your host can watch a background process's stdout
-   and wake you on a regex, you may instead run the background listener and wake
-   on \`^${INBOUND_SENTINEL}\`. Test it with one message: if no wake fires within
-   one receive cycle, your host buffers stdout — stay on the tool-loop in step 4.
+After \`agentbridge-setup --onboard\` (or MCP already configured):
 
-6) (Optional autonomous mode) If you explicitly want unattended replies and your
-   host has a supported headless CLI, run:
-   \`agentbridge-worker --host <cursor|claude-code|codex>\`
-   By default the worker is autonomous but stays governed by your host's EXISTING
-   allow/deny configuration (no live human prompts). It skips noisy system traffic
-   (error/result and self-echoes), always replies when directly addressed, and on
-   broadcasts only replies when the content is a task/request for participants.
-   Add \`--full-access\` to grant everything. \`--read-only\` uses read-only
-   sandboxes on claude/codex; on cursor it is equivalent to default \`-p\` (no
-   strict read-only sandbox). Note: cursor headless has no clean allow-list-only
-   switch, so on cursor the default still honors your deny list but auto-runs
-   allowed actions.
+1) Call \`connect\`, then \`leave_meeting\` (MCP send-only — listener is the sole poller).
+2) With user approval, run \`agentbridge-listen\` as a background process. Watch stdout for \`^${INBOUND_SENTINEL}\`.
+3) On each wake: read the inbound line (content is after \` :: \`), reply with \`send_message\`. Do NOT \`ack_messages\` — the listener already acked.
+4) Reply when addressed to you or when a human message clearly needs a response. Skip your own echoes.
 
-Rules: ask me before running any shell command. Keep replies concise. Keep the
-loop going across turns until I say stop.`;
+Start listener:
+
+  npx -y -p @junctum/agent-bridge-mcp agentbridge-listen
+
+(Secrets load automatically from \`.agentbridge/secrets.env\` in the workspace.)
+
+## Universal fallback (every host) — tool-loop
+
+1) \`connect\`, then \`join_meeting\` with { replay_history: false }
+2) Loop: \`receive_messages\` { timeout_ms: 120000 } → \`send_message\` → \`ack_messages\` (ack AFTER handling)
+3) Ignore your own echoes; immediately start the next \`receive_messages\`
+
+## Optional: autonomous worker (separate headless agent — NOT this chat)
+
+Only if the user explicitly wants unattended replies:
+\`agentbridge-worker --host <cursor|claude-code|codex>\`
+
+Rules: ask before shell commands. Keep replies concise. Keep listening until the user says stop.`;
 
 /** Concise, host-agnostic setup guide. Leads with the universal tool-loop. */
 export const SETUP_GUIDE = `# AgentBridge — continuous listening setup
@@ -217,9 +206,59 @@ agents, or stay in a meeting.
 - Ack only after you have handled a message, so interrupted work is re-delivered.
 `;
 
+/** Cursor chat-wake skill — same interactive agent, not a headless worker. */
+export const CURSOR_LISTENING_SKILL = `# Skill: AgentBridge continuous listening (Cursor chat-wake)
+
+Use when the user asks to join a session, keep listening, or stay in a meeting.
+
+## Goal
+
+Incoming AgentBridge messages wake **this same chat agent**. You reply in the session via MCP \`send_message\` — not via \`agentbridge-worker\`.
+
+## Prerequisites
+
+- \`agentbridge-setup --onboard --host cursor\` has run (or MCP is configured with \`.agentbridge/secrets.env\`).
+- \`agentbridge\` MCP server is loaded.
+
+## Start listening
+
+1. Ask before running shell commands.
+2. \`connect\`, then \`leave_meeting\` (MCP send-only; the listener is the sole poller).
+3. Start \`agentbridge-listen\` in the background; watch for \`^${INBOUND_SENTINEL}\`.
+4. Wait for \`${READY_SENTINEL}\` in listener output.
+
+\`\`\`bash
+npx -y -p @junctum/agent-bridge-mcp agentbridge-listen
+\`\`\`
+
+## On each wake
+
+1. Read new \`${INBOUND_SENTINEL}\` lines (content follows \` :: \`).
+2. Reply via \`send_message\` when addressed to you or clearly needed. Skip your own echoes.
+3. Do **not** \`ack_messages\` — the listener acked on delivery.
+
+## Fallback
+
+If wake is flaky, use the tool-loop: \`join_meeting\` → loop \`receive_messages\` / \`send_message\` / \`ack_messages\`.
+
+## Stop
+
+Terminate the listener when the user says stop.
+`;
+
+export function listeningSkillForHost(host: string): string {
+  const profile = hostProfile(host);
+  if (profile.supportsStdoutWake && host.toLowerCase() === 'cursor') {
+    return CURSOR_LISTENING_SKILL;
+  }
+  return LISTENING_SKILL;
+}
+
 export interface HostProfile {
   /** Whether this host typically surfaces a long-running process's stdout live. */
   supportsStdoutWake: boolean;
+  /** Use envFile + .agentbridge/secrets.env instead of inline env in MCP config. */
+  usesSecretsEnvFile: boolean;
   /** One-line recommendation for this host. */
   recommendation: string;
   /** Human-facing host label. */
@@ -243,19 +282,21 @@ export interface HostProfile {
 const HOST_PROFILES: Record<string, HostProfile> = {
   cursor: {
     supportsStdoutWake: true,
+    usesSecretsEnvFile: true,
     recommendation:
       'Both modes work. The background listener + an output notification on `^AGENTBRIDGE_INBOUND` is a good fit.',
     label: 'Cursor',
     configFormat: 'json',
     configPath: '~/.cursor/mcp.json',
     projectConfigPath: '.cursor/mcp.json',
-    skillPathHint: '.cursor/rules/ or AGENTS.md',
-    skillDefaultPath: '.cursor/rules/agentbridge-continuous-listening.md',
+    skillPathHint: '.cursor/skills/agentbridge/',
+    skillDefaultPath: '.cursor/skills/agentbridge/SKILL.md',
     supportsWorker: true,
     installHint: 'Use .cursor/mcp.json (project) or ~/.cursor/mcp.json (global).',
   },
   'claude-code': {
     supportsStdoutWake: false,
+    usesSecretsEnvFile: false,
     recommendation:
       'Prefer the tool-loop. Wire a hook/watcher on `^AGENTBRIDGE_INBOUND` only if your setup surfaces live stdout.',
     label: 'Claude Code',
@@ -269,6 +310,7 @@ const HOST_PROFILES: Record<string, HostProfile> = {
   },
   codex: {
     supportsStdoutWake: false,
+    usesSecretsEnvFile: false,
     recommendation:
       'Prefer the tool-loop. Codex-style CLIs may delay or buffer long-running stdout, so only enable the listener after a successful live test.',
     label: 'OpenAI Codex CLI',
@@ -281,6 +323,7 @@ const HOST_PROFILES: Record<string, HostProfile> = {
   },
   hermes: {
     supportsStdoutWake: false,
+    usesSecretsEnvFile: false,
     recommendation:
       'Prefer the tool-loop. On Hermes the stdout wake may fire but with delay/uncertainty, so only enable the listener after a successful live test.',
     label: 'Hermes',
@@ -293,6 +336,7 @@ const HOST_PROFILES: Record<string, HostProfile> = {
   },
   'claude-desktop': {
     supportsStdoutWake: false,
+    usesSecretsEnvFile: false,
     recommendation: 'Prefer the tool-loop. Claude Desktop has no first-class background wake primitive.',
     label: 'Claude Desktop',
     configFormat: 'json',
@@ -304,6 +348,7 @@ const HOST_PROFILES: Record<string, HostProfile> = {
   },
   'vscode-copilot': {
     supportsStdoutWake: false,
+    usesSecretsEnvFile: true,
     recommendation:
       'Prefer the tool-loop. A task watcher on `^AGENTBRIDGE_INBOUND` can work if it surfaces live stdout.',
     label: 'GitHub Copilot / VS Code',
@@ -316,6 +361,7 @@ const HOST_PROFILES: Record<string, HostProfile> = {
   },
   generic: {
     supportsStdoutWake: false,
+    usesSecretsEnvFile: false,
     recommendation:
       'Use the tool-loop unless you have proven your host wakes the agent on background stdout.',
     label: 'Generic MCP host',
@@ -349,18 +395,34 @@ export function supportedHosts(): string[] {
 export interface HostConfigSnippet {
   command: string;
   args: string[];
-  env: Record<string, string>;
+  env?: Record<string, string>;
+  envFile?: string;
 }
 
-export function hostMcpSnippet(sessionLink = '<your session link>', agentName = '<your agent name>'): HostConfigSnippet {
-  return {
+export function hostMcpSnippetForProfile(
+  profile: HostProfile,
+  sessionLink = '<your session link>',
+  agentName = '<your agent name>'
+): HostConfigSnippet {
+  const base = {
     command: 'npx',
     args: ['-y', '-p', '@junctum/agent-bridge-mcp', 'agentbridge-mcp-server'],
+  };
+  if (profile.usesSecretsEnvFile) {
+    return { ...base, envFile: CURSOR_ENV_FILE };
+  }
+  return {
+    ...base,
     env: {
       AGENTBRIDGE_SESSION_LINK: sessionLink,
       AGENTBRIDGE_AGENT_NAME: agentName,
     },
   };
+}
+
+/** @deprecated Prefer hostMcpSnippetForProfile(hostProfile(host), …). */
+export function hostMcpSnippet(sessionLink = '<your session link>', agentName = '<your agent name>'): HostConfigSnippet {
+  return hostMcpSnippetForProfile(hostProfile('generic'), sessionLink, agentName);
 }
 
 export function setupGuideForHost(host: string): string {

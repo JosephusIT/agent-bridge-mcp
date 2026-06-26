@@ -1,5 +1,6 @@
 /** Shared environment/session configuration for the MCP server and CLIs. */
 
+import { loadAgentbridgeSecretsFile } from './env-file.js';
 import { parseSessionLink } from './link-parser.js';
 import type { AgentBridgeSession } from './transport.js';
 
@@ -35,6 +36,7 @@ export function loadTimingConfig(): TimingConfig {
  * Throws a descriptive Error when the session link is missing or invalid.
  */
 export function loadSessionFromEnv(): AgentBridgeSession {
+  loadAgentbridgeSecretsFile();
   const link = process.env.AGENTBRIDGE_SESSION_LINK;
   if (!link) {
     throw new Error('AGENTBRIDGE_SESSION_LINK is not set.');
