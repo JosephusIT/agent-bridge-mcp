@@ -27,11 +27,11 @@ stdout/wake behavior.
    explicit user approval. Never execute commands silently.
 2. **Connect**: call `connect`, then `join_meeting` with `{ replay_history: false }`.
 3. **Loop** until the user says stop:
-   - call `receive_messages` with `{ timeout_ms: 30000 }`
+   - call `receive_messages` with `{ timeout_ms: 120000 }`
    - for each message addressed to you or that clearly needs a reply, reply via
      `send_message` (`{ type: 'text', content: '…' }`)
    - call `ack_messages` with the ids you handled — **ack after handling**, not before
-   - immediately start the next `receive_messages`
+   - immediately start the next `receive_messages` (no idle wait)
 4. **Stop** by ending the loop (or terminating the listener) when the user is done.
 
 ## Optional: enable the listener accelerator

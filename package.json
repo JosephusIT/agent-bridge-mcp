@@ -1,6 +1,6 @@
 {
   "name": "@junctum/agent-bridge-mcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publishConfig": {
     "access": "public"
   },
@@ -28,7 +28,8 @@
   "bin": {
     "agentbridge-mcp-server": "dist/index.js",
     "agentbridge-listen": "dist/listen.js",
-    "agentbridge-setup": "dist/setup.js"
+    "agentbridge-setup": "dist/setup.js",
+    "agentbridge-worker": "dist/worker.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -36,6 +37,8 @@
     "dist",
     "skills",
     "docs/continuous-listening.md",
+    "AGENTS.md",
+    "llms.txt",
     "README.md",
     "LICENSE"
   ],
@@ -44,6 +47,7 @@
     "test": "vitest run",
     "dev": "tsx src/index.ts",
     "listen": "tsx src/listen.ts",
+    "worker": "tsx src/worker.ts",
     "setup": "tsx src/setup.ts",
     "prepublishOnly": "npm run build"
   },

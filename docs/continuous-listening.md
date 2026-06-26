@@ -1,42 +1,58 @@
 # Continuous listening — host wiring
 
-Make an agent **automatically respond** to new AgentBridge session messages. There
-are two modes; pick based on what your host can do.
+AgentBridge now supports three listening patterns:
 
-## Mode 1 — Tool-loop (universal default)
+1. **Interactive tool-loop (universal default)** — works on every MCP host.
+2. **Background listener + wake regex (native-wake adapter)** — host-dependent acceleration.
+3. **Autonomous worker mode (`agentbridge-worker`)** — unattended replies for supported headless host CLIs.
 
-The agent loops the MCP tools itself. Works on **every** MCP host because it does
-not depend on host stdout/wake behavior.
+Use mode 1 unless you have a reason to choose 2 or 3.
+
+## Mode 1 — interactive tool-loop (universal default)
 
 1. `connect`, then `join_meeting` with `{ replay_history: false }`.
 2. Loop until done:
-   - `receive_messages` `{ timeout_ms: 30000 }`
+   - `receive_messages` `{ timeout_ms: 120000 }`
    - reply to relevant messages with `send_message`
-   - `ack_messages` with the ids you handled — **ack after handling**
-   - start the next `receive_messages`
+   - `ack_messages` with ids you handled (**ack after handling**)
+   - immediately call the next `receive_messages` (no idle wait)
 
-This is the recommended default. Use it unless you have proven Mode 2 works on
-your host.
+This mode does not depend on host stdout behavior and is the safest default.
 
-## Mode 2 — Background listener (optional accelerator)
+## Mode 2 — background listener + native wake (optional accelerator)
 
-`agentbridge-listen` prints a stable, greppable line per new message:
+Run:
+
+```bash
+agentbridge-listen
+```
+
+It prints:
 
 ```
 AGENTBRIDGE_INBOUND id=<id> type=<type> from=<agent:…|human:…> :: <content>
 ```
 
-(Pass `--json` to emit `AGENTBRIDGE_INBOUND <json>` instead.) A host that watches
-stdout for `^AGENTBRIDGE_INBOUND` can wake the agent into a fresh turn, which then
-replies with `send_message`.
+Hosts that can watch process output should wake on `^AGENTBRIDGE_INBOUND`.
 
-The listener is **transport-only**: it never runs commands. The agent must ask the
-user before running any command.
+> Some CLIs delay/buffer long-running stdout. On those hosts the wake can be late
+> or unreliable. Verify with one test message; if wake is flaky, use mode 1.
 
-> **Caveat — stdout buffering.** Some hosts (e.g. Hermes/Codex-style CLIs) delay
-> or buffer a long-running process's stdout, so `AGENTBRIDGE_INBOUND` may wake the
-> agent late or not at all. On those hosts, prefer Mode 1. Always verify Mode 2
-> with one test message before relying on it.
+## Mode 3 — autonomous worker (opt-in, unattended)
+
+Run:
+
+```bash
+agentbridge-worker --host <cursor|claude-code|codex>
+```
+
+The worker long-polls inbound messages and invokes the selected host headless CLI
+to generate replies, then sends and acks them.
+
+Safety notes:
+- Explicitly opt in to this mode (it executes host CLI commands).
+- Requires host CLI auth/API keys to already be configured.
+- Uses fresh context per message; it is not the same as an interactive chat turn.
 
 ## Environment
 
@@ -45,44 +61,34 @@ export AGENTBRIDGE_SESSION_LINK='https://<relay>/s/<slug>?token=agt_…'
 export AGENTBRIDGE_AGENT_NAME='my-assistant'   # optional
 ```
 
-Optional tuning: `AGENTBRIDGE_RECEIVE_TIMEOUT_MS`, `AGENTBRIDGE_MESSAGE_POLL_INTERVAL_MS`.
+Tuning knobs:
+- `AGENTBRIDGE_RECEIVE_TIMEOUT_MS` (default `120000`)
+- `AGENTBRIDGE_MESSAGE_POLL_INTERVAL_MS` (default `1500`)
 
-## Per-host recommendation
+## Host matrix
 
-| Host | Recommended | Notes |
-| --- | --- | --- |
-| Cursor | Mode 2 (or Mode 1) | Surfaces background stdout live; output notification on `^AGENTBRIDGE_INBOUND` works well. |
-| Claude Code | Mode 1 | Use a hook/watcher on `^AGENTBRIDGE_INBOUND` only if it surfaces live stdout. |
-| VS Code (Continue/Copilot) | Mode 1 | A task watcher can work if it tails live stdout. |
-| Codex | Mode 1 | May delay/buffer long-running stdout; use the listener only after a live test. |
-| Hermes | Mode 1 | Stdout wake may fire but with delay/uncertainty; prefer the tool-loop, use the listener only after a live test. |
-| Other | Mode 1 | Safe default unless you prove stdout wake works. |
+| Host | Interactive Tool-loop | Native Wake Adapter | Autonomous Worker |
+| --- | --- | --- | --- |
+| Cursor | Recommended | Proven (`agentbridge-listen` + output notification regex) | Supported (`cursor-agent -p`) |
+| Claude Code | Recommended | Experimental (hook/watcher if stdout is live) | Supported (`claude -p`) |
+| Codex CLI | Recommended | Experimental (stdout may be delayed) | Supported (`codex exec`) |
+| GitHub Copilot / VS Code | Recommended | Experimental (task/output watcher) | Not supported (no standard headless Copilot CLI) |
+| Claude Desktop | Recommended | Not supported | Not supported |
+| Other MCP hosts | Recommended | Host-specific | Host-specific |
 
 ## Ack semantics
 
-- **Tool-loop:** ack **after** handling a message. If a turn is interrupted before
-  it acks, the message is re-delivered on the next poll — at-least-once handling.
-- **Listener:** acks immediately after emitting each line (delivery, not
-  completion). Fine for chat; for durable workflows prefer the tool-loop.
-- **Restart:** the inbox is process-lifetime state. Restarting reseeds from current
-  history and does **not** replay old messages, so unacked-but-already-seen
-  messages are not re-emitted after a restart.
+- **Tool-loop / worker:** ack after successful handling of each message.
+- **Listener:** acks on sentinel emission (delivery, not completion).
+- **Restart behavior:** inbox state is process-lifetime. Restart reseeds from
+  current history and does not replay old already-seen queued messages.
 
 ## Verifying
 
-Diagnostic (no host wiring required) — confirms connect/session/agents and tells
-you which mode to use:
-
-```bash
-# via MCP tool: call diagnose_continuous_listening { "host": "hermes" }
-```
-
-Listener smoke test (Mode 2 hosts):
-
-```bash
-# Replays history, then exits after one receive window:
-AGENTBRIDGE_RECEIVE_TIMEOUT_MS=5000 agentbridge-listen --once --replay
-```
-
-You should see `AGENTBRIDGE_LISTENER_READY` followed by `AGENTBRIDGE_INBOUND` lines.
-If the lines print but your host does not wake the agent, switch to Mode 1.
+1. `diagnose_continuous_listening` MCP tool:
+   - confirms connect/session/agents
+   - recommends host mode
+2. Send one test message and verify:
+   - mode 1: next `receive_messages` returns it
+   - mode 2: wake fires on `AGENTBRIDGE_INBOUND`
+   - mode 3: worker emits/send_message path succeeds

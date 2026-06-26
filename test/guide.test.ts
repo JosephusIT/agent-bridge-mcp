@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { hostProfile, LISTENING_SKILL, ONBOARDING_PROMPT, setupGuideForHost, SETUP_GUIDE } from '../src/guide.js';
 
@@ -11,6 +13,12 @@ describe('guide content', () => {
     expect(ONBOARDING_PROMPT).toContain('receive_messages');
     expect(ONBOARDING_PROMPT).toContain('ack AFTER handling');
     expect(LISTENING_SKILL).toContain('ack after handling');
+  });
+
+  it('keeps AGENTS.md onboarding prompt in sync', () => {
+    const agents = readFileSync(resolve(process.cwd(), 'AGENTS.md'), 'utf8');
+    const promptBlock = ['```text', ONBOARDING_PROMPT, '```'].join('\n');
+    expect(agents).toContain(promptBlock);
   });
 });
 
