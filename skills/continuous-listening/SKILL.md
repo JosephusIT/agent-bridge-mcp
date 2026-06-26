@@ -23,13 +23,17 @@ stdout/wake behavior.
 3. **Autonomous worker (optional, unattended).** `agentbridge-worker --host
    <cursor|claude-code|codex>` replies for you via the host headless CLI. It is
    autonomous (no live prompts) and, by default, governed by your host's EXISTING
-   allow/deny config. Add `--full-access` to grant everything or `--read-only` to
-   restrict it to replies only. Message content goes to a private `0600` temp file
-   (only its path is passed in argv); a failing message yields an
-   `[agentbridge-worker error] …` reply, gets acked, and the worker continues.
-   Cursor caveat: cursor headless has no allow-list-only switch, so its default
-   honors your deny list but auto-runs allowed actions (`--full-access` adds
-   `--force`).
+   allow/deny config. It skips `error`/`result` traffic and self-echoes, always
+   replies when directly addressed, and on broadcasts only replies when content is
+   a task/request for participants. Add `--full-access` to grant everything.
+   `--read-only` uses strict read-only sandboxes on claude/codex; on cursor it is
+   equivalent to default `-p`. Message content goes to a private `0600` temp file
+   (only its path is passed in argv). A failing message yields a generic error
+   reply (`[agentbridge-worker] could not generate a reply (see worker logs).`),
+   gets acked, and the worker continues. Cursor caveat: cursor headless has no
+   allow-list-only switch, so its default honors your deny list but auto-runs
+   allowed actions (`--full-access` adds `--force`). Claude caveat:
+   `--permission-mode dontAsk` requires a recent Claude Code release.
 
 ## Steps (tool-loop)
 

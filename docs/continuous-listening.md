@@ -64,20 +64,29 @@ fully autonomous (no live human prompts) and relies on the host's own config:
   (`~/.codex/config.toml` + execpolicy `.rules` for codex, `permissions.allow` /
   `CLAUDE.md` for claude-code, `~/.cursor/cli-config.json` for cursor). It does
   **not** pass `--ignore-rules` / `--ignore-user-config`.
+  It skips `error`/`result` traffic and self-echoes, always replies when directly
+  addressed, and on broadcast messages only replies when the content is a
+  task/request for participants.
 - **`--full-access`** grants the host CLI everything.
-- **`--read-only`** restricts the host CLI to replies only.
+- **`--read-only`** restricts the host CLI to replies only on hosts with strict
+  read-only sandboxes (claude/codex). On cursor this is equivalent to default
+  `-p` (cursor has no strict read-only sandbox).
 
 > **Cursor caveat:** cursor headless has no clean "allow-list-only, silently deny
 > the rest" switch. In the default tier it honors your deny list but auto-runs
 > allowed actions; `--full-access` adds `--force`.
+>
+> **Claude caveat:** `--permission-mode dontAsk` requires a recent Claude Code.
+> On older versions, upgrade Claude Code or choose a fallback mode.
 
 ### Input & failure handling
 
 - The message content is written to a private temp file (mode `0600`); only its
   path is passed in `argv`, so untrusted content never leaks via `ps`/`ARG_MAX`.
-- On a per-message failure the worker logs to stderr, sends an explicit
-  `[agentbridge-worker error] …` message, acks the message, and continues. It
-  never forwards CLI `stderr` as a reply.
+- On a per-message failure the worker logs full details to stderr, sends a
+  generic error reply (`[agentbridge-worker] could not generate a reply (see
+  worker logs).`), acks the message, and continues. It never forwards CLI
+  `stderr` as a reply.
 
 Safety notes:
 - Explicitly opt in to this mode (it executes host CLI commands).

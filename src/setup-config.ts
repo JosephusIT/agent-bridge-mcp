@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 
 import type { HostProfile, HostConfigSnippet } from './guide.js';
@@ -30,7 +31,7 @@ export function resolveTargetPath(
 ): string {
   if (opts.override) return resolve(opts.override);
   const cwd = opts.cwd ?? process.cwd();
-  const home = opts.homeDir ?? process.env.HOME ?? cwd;
+  const home = opts.homeDir ?? homedir();
   const target = profile.projectConfigPath ?? profile.configPath;
   const resolved = resolveHome(target, home);
   if (target.startsWith('.')) return resolve(cwd, target);
@@ -49,8 +50,16 @@ function jsonConfigPayload(snippet: HostConfigSnippet): Record<string, unknown> 
   };
 }
 
-export function mergeJsonConfig(existingText: string | null, snippet: HostConfigSnippet): string {
-  const parsed = existingText ? (JSON.parse(existingText) as Record<string, unknown>) : {};
+export function mergeJsonConfig(existingText: string | null, snippet: HostConfigSnippet, sourcePath = 'config'): string {
+  let parsed: Record<string, unknown> = {};
+  if (existingText) {
+    try {
+      parsed = JSON.parse(existingText) as Record<string, unknown>;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to parse existing JSON config at ${sourcePath}: ${detail}`);
+    }
+  }
   const root = parsed && typeof parsed === 'object' ? parsed : {};
   const mcpServers =
     root.mcpServers && typeof root.mcpServers === 'object' ? (root.mcpServers as Record<string, unknown>) : {};
@@ -100,7 +109,7 @@ function isAgentbridgeTableName(name: string): boolean {
  * when we reach a header that is NOT a child of `mcp_servers.agentbridge`.
  */
 function stripAgentbridgeTables(text: string): string {
-  const headerRe = /^\s*\[\[?([^\]]+)\]\]?\s*$/;
+  const headerRe = /^\s*\[\[?\s*([^\]]+?)\s*\]\]?\s*(#.*)?$/;
   const kept: string[] = [];
   let skipping = false;
   for (const line of text.split('\n')) {
@@ -147,7 +156,9 @@ export function installHostConfig(opts: InstallOptions): InstallResult {
   const exists = existsSync(targetPath);
   const existing = exists ? readFileSync(targetPath, 'utf8') : null;
   const updated =
-    opts.profile.configFormat === 'toml' ? mergeTomlConfig(existing, opts.snippet) : mergeJsonConfig(existing, opts.snippet);
+    opts.profile.configFormat === 'toml'
+      ? mergeTomlConfig(existing, opts.snippet)
+      : mergeJsonConfig(existing, opts.snippet, targetPath);
 
   let backupPath: string | undefined;
   if (exists) {

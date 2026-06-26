@@ -62,7 +62,7 @@ Other bins:
 ```bash
 npx -y -p @junctum/agent-bridge-mcp agentbridge-setup
 npx -y -p @junctum/agent-bridge-mcp agentbridge-listen
-npx -y -p @junctum/agent-bridge-mcp agentbridge-worker
+npx -y -p @junctum/agent-bridge-mcp agentbridge-worker --host <cursor|claude-code|codex>
 ```
 
 Homebrew (tap):
@@ -200,13 +200,19 @@ has three permission tiers:
   allowlist; it runs what the host already permits and denies the rest. Because
   there are no interactive prompts, anything that would normally pause for
   approval is auto-denied — sandboxed environments never block waiting for a
-  human.
+  human. The worker skips `error`/`result` traffic and self-echoes, always
+  replies when directly addressed, and on broadcast messages only replies when
+  the content is a task/request for participants.
 - **`--full-access`** — grants everything (claude `bypassPermissions`, codex
   `--sandbox danger-full-access`, cursor `--force`). Use only in disposable or
   fully trusted environments.
 - **`--read-only`** (optional) — the worker only reads and replies; no tools that
-  modify the system run (claude `--permission-mode plan`, codex
-  `--sandbox read-only`, cursor without `--force`).
+  modify the system run on hosts with real read-only sandboxes (claude
+  `--permission-mode plan`, codex `--sandbox read-only`). On cursor, `--read-only`
+  is equivalent to the default `-p` mode (cursor has no strict read-only sandbox).
+
+> **Claude caveat:** `--permission-mode dontAsk` requires a recent Claude Code.
+> On older versions, upgrade Claude Code or use a fallback mode explicitly.
 
 > **Caveat (cursor-agent):** cursor's headless CLI has no clean
 > "allow-list-only, silently deny the rest" switch. It honors the deny list, but

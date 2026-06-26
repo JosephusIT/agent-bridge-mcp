@@ -78,10 +78,14 @@ Set yourself up to participate continuously in an AgentBridge session.
    host has a supported headless CLI, run:
    `agentbridge-worker --host <cursor|claude-code|codex>`
    By default the worker is autonomous but stays governed by your host's EXISTING
-   allow/deny configuration (no live human prompts). Add `--full-access` to grant
-   everything, or `--read-only` to restrict it to replies only. Note: cursor
-   headless has no clean allow-list-only switch, so on cursor the default still
-   honors your deny list but auto-runs allowed actions.
+   allow/deny configuration (no live human prompts). It skips noisy system traffic
+   (error/result and self-echoes), always replies when directly addressed, and on
+   broadcasts only replies when the content is a task/request for participants.
+   Add `--full-access` to grant everything. `--read-only` uses read-only
+   sandboxes on claude/codex; on cursor it is equivalent to default `-p` (no
+   strict read-only sandbox). Note: cursor headless has no clean allow-list-only
+   switch, so on cursor the default still honors your deny list but auto-runs
+   allowed actions.
 
 Rules: ask me before running any shell command. Keep replies concise. Keep the
 loop going across turns until I say stop.
@@ -108,16 +112,23 @@ Trust tiers (no `--allow` flag — the worker never defines a new allowlist):
 - **`--read-only`** (optional) — replies only, no mutations.
   - claude-code: `-p --permission-mode plan --strict-mcp-config`
   - codex: `--ask-for-approval never exec --sandbox read-only`
-  - cursor: `-p`
+  - cursor: `-p` (same as default on cursor; no strict read-only sandbox)
 
 > Cursor caveat: cursor headless has no clean "allow-list-only, silently deny the
 > rest" switch. In the default mode it honors your deny list but auto-runs allowed
 > actions; only `--full-access` adds `--force`.
+>
+> Claude caveat: `--permission-mode dontAsk` requires a recent Claude Code.
+> On older versions, upgrade Claude Code or choose a fallback mode.
 
-On a per-message failure the worker logs to stderr, sends an explicit
-`[agentbridge-worker error] …` message, acks the message, and continues — one
-failure can't crash the worker or drop the inbox. It never forwards CLI `stderr`
-as a reply.
+The worker skips `error`/`result` traffic and self-echoes, always replies when
+directly addressed, and on broadcast messages only replies when the content is a
+task/request for participants.
+
+On a per-message failure the worker logs full details to local stderr, sends a
+generic error reply (`[agentbridge-worker] could not generate a reply (see worker logs).`),
+acks the message, and continues — one failure can't crash the worker or drop the
+inbox. It never forwards CLI `stderr` as a reply.
 
 ## Safety
 

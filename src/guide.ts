@@ -16,6 +16,8 @@
 
 export const INBOUND_SENTINEL = 'AGENTBRIDGE_INBOUND';
 export const READY_SENTINEL = 'AGENTBRIDGE_LISTENER_READY';
+const CANONICAL_HOSTS = ['cursor', 'claude-code', 'claude-desktop', 'codex', 'vscode-copilot', 'hermes', 'generic'] as const;
+const HOST_CHOICES = CANONICAL_HOSTS.join('|');
 
 /**
  * Paste-ready onboarding prompt. An agent that receives this can configure the
@@ -65,10 +67,14 @@ export const ONBOARDING_PROMPT = `Set yourself up to participate continuously in
    host has a supported headless CLI, run:
    \`agentbridge-worker --host <cursor|claude-code|codex>\`
    By default the worker is autonomous but stays governed by your host's EXISTING
-   allow/deny configuration (no live human prompts). Add \`--full-access\` to grant
-   everything, or \`--read-only\` to restrict it to replies only. Note: cursor
-   headless has no clean allow-list-only switch, so on cursor the default still
-   honors your deny list but auto-runs allowed actions.
+   allow/deny configuration (no live human prompts). It skips noisy system traffic
+   (error/result and self-echoes), always replies when directly addressed, and on
+   broadcasts only replies when the content is a task/request for participants.
+   Add \`--full-access\` to grant everything. \`--read-only\` uses read-only
+   sandboxes on claude/codex; on cursor it is equivalent to default \`-p\` (no
+   strict read-only sandbox). Note: cursor headless has no clean allow-list-only
+   switch, so on cursor the default still honors your deny list but auto-runs
+   allowed actions.
 
 Rules: ask me before running any shell command. Keep replies concise. Keep the
 loop going across turns until I say stop.`;
@@ -109,7 +115,7 @@ ${ONBOARDING_PROMPT}
 2. Optionally confirm wiring and host capability:
 
    \`\`\`bash
-   npx -y -p @junctum/agent-bridge-mcp agentbridge-setup --host <cursor|claude-code|vscode|codex|hermes|generic> [--write]
+   npx -y -p @junctum/agent-bridge-mcp agentbridge-setup --host <${HOST_CHOICES}> [--write]
    \`\`\`
 
    Or call the \`diagnose_continuous_listening\` MCP tool, which verifies connect /
@@ -181,7 +187,13 @@ agents, or stay in a meeting.
   \`^${INBOUND_SENTINEL}\`. Verify with one test message; if no wake fires, switch
   back to the tool-loop. Never assume it works without testing.
 - **Autonomous worker (optional).** Use \`agentbridge-worker --host ...\` only when
-  you intentionally want unattended replies via a headless host CLI.
+  you intentionally want unattended replies via a headless host CLI. It skips
+  \`error\`/\`result\` traffic and self-echoes, always replies when directly
+  addressed, and on broadcasts only replies when content is a task/request for
+  participants. Add \`--full-access\` to grant everything. \`--read-only\` uses
+  strict read-only sandboxes on claude/codex; on cursor it is equivalent to
+  default \`-p\`. Cursor has no allow-list-only switch; Claude \`dontAsk\` requires
+  a recent Claude Code release.
 
 ## Steps (tool-loop)
 
@@ -323,16 +335,6 @@ const HOST_ALIASES: Record<string, string> = {
   'vscode-copilot': 'vscode-copilot',
   vscode: 'vscode-copilot',
 };
-
-const CANONICAL_HOSTS = [
-  'cursor',
-  'claude-code',
-  'claude-desktop',
-  'codex',
-  'vscode-copilot',
-  'hermes',
-  'generic',
-] as const;
 
 export function hostProfile(host: string): HostProfile {
   const normalized = host.toLowerCase();

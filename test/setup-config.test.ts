@@ -27,6 +27,12 @@ describe('mergeJsonConfig', () => {
     expect(parsed.mcpServers.agentbridge.command).toBe('npx');
     expect(parsed.mcpServers.agentbridge.env?.AGENTBRIDGE_AGENT_NAME).toBe('new-agent');
   });
+
+  it('throws a clear error when existing JSON is malformed', () => {
+    expect(() => mergeJsonConfig('{ invalid-json', hostMcpSnippet('https://new', 'bot'), '/tmp/mcp.json')).toThrow(
+      /Failed to parse existing JSON config at \/tmp\/mcp\.json/
+    );
+  });
 });
 
 describe('mergeTomlConfig', () => {
@@ -78,6 +84,22 @@ command = "node"
 `;
     const merged = mergeTomlConfig(existing, hostMcpSnippet('https://new', 'bot'));
     expect(merged).toContain('[mcp_servers.other]');
+    expect(merged).toContain('command = "node"');
+    expect(merged.match(/\[mcp_servers\.agentbridge\.env\]/g) ?? []).toHaveLength(1);
+  });
+
+  it('preserves unrelated tables with inline-comment headers after agentbridge', () => {
+    const existing = `[mcp_servers.agentbridge]
+command = "old"
+
+[mcp_servers.agentbridge.env]
+AGENTBRIDGE_SESSION_LINK = "old"
+
+[mcp_servers.other] # keep this table
+command = "node"
+`;
+    const merged = mergeTomlConfig(existing, hostMcpSnippet('https://new', 'bot'));
+    expect(merged).toContain('[mcp_servers.other] # keep this table');
     expect(merged).toContain('command = "node"');
     expect(merged.match(/\[mcp_servers\.agentbridge\.env\]/g) ?? []).toHaveLength(1);
   });

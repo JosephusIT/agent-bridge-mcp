@@ -3,13 +3,14 @@
  * agentbridge-setup — prints continuous-listening setup guidance and the
  * portable agent skill, and can print/install host-specific MCP config.
  *
- *   agentbridge-setup [--host <cursor|claude-code|claude-desktop|codex|vscode-copilot|generic>]
+ *   agentbridge-setup [--host <cursor|claude-code|claude-desktop|codex|vscode-copilot|hermes|generic>]
  *                     [--skill] [--write-skill [path]]
  *                     [--print-config] [--install] [--config-path <path>]
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, isAbsolute, resolve } from 'node:path';
 
 import type { HostConfigSnippet, HostProfile } from './guide.js';
 import { hostMcpSnippet, hostProfile, LISTENING_SKILL, setupGuideForHost, supportedHosts } from './guide.js';
@@ -25,7 +26,7 @@ function getFlagValue(argv: string[], flag: string): string | undefined {
 
 function writeSkill(argv: string[], profile: HostProfile): void {
   const rawTarget = getFlagValue(argv, '--write-skill') || getFlagValue(argv, '--write') || profile.skillDefaultPath;
-  const target = rawTarget.startsWith('~/') ? resolve(process.env.HOME ?? process.cwd(), rawTarget.slice(2)) : rawTarget;
+  const target = rawTarget.startsWith('~/') ? resolve(homedir(), rawTarget.slice(2)) : rawTarget;
   mkdirSync(dirname(target) === '' ? '.' : dirname(target), { recursive: true });
   writeFileSync(target, LISTENING_SKILL, 'utf8');
   console.log(`Wrote listening skill to ${target}`);
@@ -44,6 +45,14 @@ function printConfig(profile: HostProfile, snippet: HostConfigSnippet, configPat
 }
 
 function installConfig(host: string, profile: HostProfile, snippet: HostConfigSnippet, configPathOverride?: string): void {
+  const writesProjectConfig = configPathOverride ? !isAbsolute(configPathOverride) : Boolean(profile.projectConfigPath);
+  const sessionLink = snippet.env.AGENTBRIDGE_SESSION_LINK ?? '';
+  const hasRealSessionLink = sessionLink.trim().length > 0 && sessionLink !== '<your session link>';
+  if (writesProjectConfig && hasRealSessionLink) {
+    console.warn(
+      'Warning: writing AGENTBRIDGE_SESSION_LINK into a project config file. Treat this as sensitive and avoid committing it.'
+    );
+  }
   const result = installHostConfig({ host, profile, snippet, configPathOverride });
   console.log('\n---\n');
   console.log(`Installed MCP config at ${result.path}`);
@@ -74,6 +83,10 @@ function main(): void {
   const agentName = getFlagValue(argv, '--agent-name') || '<your agent name>';
 
   const profile = hostProfile(host);
+  const genericProfile = hostProfile('generic');
+  if (host.toLowerCase() !== 'generic' && profile === genericProfile) {
+    console.warn(`Warning: unknown --host "${host}", falling back to generic profile.`);
+  }
   const snippet = hostMcpSnippet(sessionLink, agentName);
 
   if (wantsWriteSkill) {

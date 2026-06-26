@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildHeadlessCommand, handleMessage, parseWorkerArgs, workerPrompt } from '../src/worker.js';
+import { buildHeadlessCommand, decideDispatch, handleMessage, parseWorkerArgs, workerPrompt } from '../src/worker.js';
 import type { AgentBridgeSession, Message, SendMessageInput } from '../src/transport.js';
 
 const baseMessage: Message = {
@@ -86,10 +86,15 @@ describe('buildHeadlessCommand', () => {
 describe('workerPrompt', () => {
   it('contains metadata and the temp-file path, never the raw content', () => {
     const secret = 'attacker-instructions: rm -rf / and the secret payload';
-    const prompt = workerPrompt({ ...baseMessage, content: secret, from_user_id: 'u1' }, '/tmp/ab/message.txt');
+    const prompt = workerPrompt(
+      { ...baseMessage, content: secret, from_user_id: 'u1' },
+      '/tmp/ab/message.txt',
+      { selfName: 'bot', conditional: true }
+    );
     expect(prompt).toContain('/tmp/ab/message.txt');
     expect(prompt).toContain('Incoming from user: u1');
     expect(prompt).toContain('Incoming from agent: agent-x');
+    expect(prompt).toContain('NO_REPLY');
     expect(prompt).not.toContain(secret);
   });
 });
@@ -102,7 +107,10 @@ describe('handleMessage', () => {
     const ack = vi.fn();
     const runner = vi.fn().mockResolvedValue('the reply');
 
-    await handleMessage(baseMessage, flags, session, { sendMessage, ack }, runner);
+    await handleMessage(baseMessage, flags, session, { sendMessage, ack }, runner, {
+      conditional: false,
+      selfName: 'bot',
+    });
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0][1]).toMatchObject({ type: 'text', content: 'the reply' });
@@ -114,12 +122,16 @@ describe('handleMessage', () => {
     const ack = vi.fn();
     const runner = vi.fn().mockRejectedValue(new Error('cli boom on stderr'));
 
-    await handleMessage(baseMessage, flags, session, { sendMessage, ack }, runner);
+    await handleMessage(baseMessage, flags, session, { sendMessage, ack }, runner, {
+      conditional: false,
+      selfName: 'bot',
+    });
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const sent = sendMessage.mock.calls[0][1];
     expect(sent.type).toBe('error');
-    expect(sent.content).toContain('[agentbridge-worker error]');
+    expect(sent.content).toContain('could not generate a reply');
+    expect(sent.content).not.toContain('cli boom on stderr');
     expect(ack).toHaveBeenCalledWith({ messageIds: ['m1'] });
   });
 
@@ -128,10 +140,43 @@ describe('handleMessage', () => {
     const ack = vi.fn();
     const runner = vi.fn();
 
-    await handleMessage(baseMessage, { ...flags, dryRun: true }, session, { sendMessage, ack }, runner);
+    await handleMessage(baseMessage, { ...flags, dryRun: true }, session, { sendMessage, ack }, runner, {
+      conditional: false,
+      selfName: 'bot',
+    });
 
     expect(runner).not.toHaveBeenCalled();
     expect(sendMessage.mock.calls[0][1].content).toContain('[dry-run codex]');
     expect(ack).toHaveBeenCalledWith({ messageIds: ['m1'] });
+  });
+
+  it('suppresses broadcast replies when runner returns NO_REPLY', async () => {
+    const sendMessage = vi.fn<[AgentBridgeSession, SendMessageInput], Promise<Message>>().mockResolvedValue(baseMessage);
+    const ack = vi.fn();
+    const runner = vi.fn().mockResolvedValue('NO_REPLY');
+
+    await handleMessage(baseMessage, flags, session, { sendMessage, ack }, runner, {
+      conditional: true,
+      selfName: 'bot',
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(ack).toHaveBeenCalledWith({ messageIds: ['m1'] });
+  });
+});
+
+describe('decideDispatch', () => {
+  it('skips error/result traffic and self-echoes', () => {
+    expect(decideDispatch({ ...baseMessage, type: 'error' }, 'me')).toEqual({ shouldHandle: false, conditional: false });
+    expect(decideDispatch({ ...baseMessage, type: 'result' }, 'me')).toEqual({ shouldHandle: false, conditional: false });
+    expect(decideDispatch({ ...baseMessage, from_agent_id: 'me' }, 'me')).toEqual({ shouldHandle: false, conditional: false });
+  });
+
+  it('handles directed messages unconditionally', () => {
+    expect(decideDispatch({ ...baseMessage, to_agent_id: 'me' }, 'me')).toEqual({ shouldHandle: true, conditional: false });
+  });
+
+  it('handles broadcasts conditionally', () => {
+    expect(decideDispatch({ ...baseMessage, to_agent_id: null }, 'me')).toEqual({ shouldHandle: true, conditional: true });
   });
 });
