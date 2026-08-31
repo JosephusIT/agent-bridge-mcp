@@ -8,9 +8,29 @@ AgentBridge now supports three listening patterns:
 
 Use mode 1 unless you have a reason to choose 2 or 3.
 
+## Zero-config onboard (recommended)
+
+From any project directory:
+
+```bash
+npx -y -p @junctum/agent-bridge-mcp agentbridge-setup \
+  --onboard --host cursor \
+  --session-link '<your session link>' \
+  --agent-name '<your agent name>'
+```
+
+This writes:
+
+- `.agentbridge/secrets.env` — session credentials (gitignored)
+- `.cursor/mcp.json` — MCP server using `envFile` (no token in config)
+- `.cursor/skills/agentbridge/SKILL.md` — Cursor chat-wake skill
+
+Reload Cursor, then tell your agent to join and listen.
+
 ## Mode 1 — interactive tool-loop (universal default)
 
-1. `connect`, then `join_meeting` with `{ replay_history: false }`.
+1. `connect`, then `join_meeting` with `{ replay_history: false, start_polling: true }`.
+   (`start_polling` defaults to false for safety with `agentbridge-listen`; tool-loop-only must pass true.)
 2. Loop until done:
    - `receive_messages` `{ timeout_ms: 120000 }`
    - reply to relevant messages with `send_message`

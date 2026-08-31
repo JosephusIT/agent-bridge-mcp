@@ -27,7 +27,13 @@ export function makeConnectAndAwaitApproval(
   return async function connectAndAwaitApproval(capabilities: string[]): Promise<ConnectResult> {
     const initial = await transport.connect(session, { capabilities });
     if (initial.status === 'active') return initial;
-    if (initial.status !== 'pending' || !initial.knock_id) return initial;
+    if (initial.status !== 'pending' || !initial.knock_id) {
+      throw new Error(
+        `JOIN_UNEXPECTED_STATUS: connect returned status=${initial.status}` +
+          (initial.knock_id ? '' : ' without knock_id') +
+          '. Expected active or pending with a knock_id.'
+      );
+    }
 
     const deadline = now() + options.connectTimeoutMs;
     while (now() < deadline) {

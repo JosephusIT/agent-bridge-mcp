@@ -20,6 +20,9 @@
  * to react to each sentinel line (and must ask the user before running anything).
  */
 
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { argv } from 'node:process';
 import { pathToFileURL } from 'node:url';
 
@@ -31,6 +34,7 @@ import { makeConnectAndAwaitApproval } from './connect.js';
 import { createMeetingInboxOptions, MeetingInbox } from './meeting-inbox.js';
 import type { Message } from './transport.js';
 import { HttpTransport } from './transport.js';
+import { PACKAGE_VERSION } from './version.js';
 
 export const READY_SENTINEL = 'AGENTBRIDGE_LISTENER_READY';
 export const INBOUND_SENTINEL = 'AGENTBRIDGE_INBOUND';
@@ -99,6 +103,11 @@ export function formatInbound(message: Message, json: boolean): string {
 /**
  * A message source the listener loop can drain, regardless of mode.
  * `join` seeds the cursor and `receive` long-polls for new messages.
+ *
+ * Listen acks mean "delivered to stdout" (wake fired), not "agent replied".
+ * Wakes are also appended to ~/.agentbridge/wake-outbox.jsonl before ack so a
+ * crash after the sentinel can re-fire on the next listen start (best-effort
+ * durable wake, not exactly-once agent handling).
  */
 interface MessageSource {
   readonly agentName: string;
@@ -131,7 +140,8 @@ function createInProcessSource(): MessageSource {
   return {
     agentName: session.agentName,
     async join(replayHistory: boolean) {
-      await inbox.join({ replayHistory, startPolling: true });
+      // receive() below drives polling; a second interval poller would duplicate delivery.
+      await inbox.join({ replayHistory, startPolling: false });
     },
     async receive(timeoutMs: number) {
       const result = await inbox.receive({ timeoutMs });
@@ -155,7 +165,7 @@ function createWrapperSource(command: string, args: string[]): MessageSource {
     args,
     env: { ...process.env } as Record<string, string>,
   });
-  const client = new Client({ name: 'agentbridge-listener', version: '0.1.0' }, { capabilities: {} });
+  const client = new Client({ name: 'agentbridge-listener', version: PACKAGE_VERSION }, { capabilities: {} });
 
   const callJson = async (name: string, toolArgs: Record<string, unknown>): Promise<unknown> => {
     const res = (await client.callTool({ name, arguments: toolArgs })) as {
@@ -223,13 +233,68 @@ async function startSource(flags: ListenFlags): Promise<MessageSource> {
   return source;
 }
 
-/** Print and ack a batch of inbound messages; ack failures are non-fatal. */
-async function emitAndAck(source: MessageSource, messages: Message[], json: boolean): Promise<void> {
-  for (const message of messages) {
-    console.log(formatInbound(message, json));
-  }
+/** Print inbound messages; ack only after the sentinel line was written successfully. */
+
+/** Durable wake outbox under ~/.agentbridge so a crash after stdout but before
+ * ack (or after ack) can still re-fire the host wake on the next listen start. */
+function wakeLogPath(): string {
+  const base = process.env.AGENTBRIDGE_STATE_DIR ?? join(homedir(), '.agentbridge');
+  mkdirSync(base, { recursive: true });
+  return join(base, 'wake-outbox.jsonl');
+}
+
+export function persistWake(message: Message): void {
   try {
-    await source.ack(messages.map((m) => m.id));
+    const line = JSON.stringify({ id: message.id, at: new Date().toISOString(), message }) + '\n';
+    writeFileSync(wakeLogPath(), line, { flag: 'a' });
+  } catch (err) {
+    // Best-effort durability — never block stdout delivery/ack on disk errors.
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`${ERROR_SENTINEL} wake persist failed: ${detail}`);
+  }
+}
+
+export function replayPendingWakes(json: boolean): string[] {
+  const path = wakeLogPath();
+  if (!existsSync(path)) return [];
+  const raw = readFileSync(path, 'utf8').trim();
+  if (!raw) return [];
+  const replayed: string[] = [];
+  for (const line of raw.split('\n')) {
+    try {
+      const row = JSON.parse(line) as { id?: string; message?: Message };
+      if (!row.message || !row.id) continue;
+      console.log(formatInbound(row.message, json));
+      replayed.push(row.id);
+    } catch {
+      // skip corrupt lines
+    }
+  }
+  // Truncate after a single replay pass so we do not loop forever.
+  writeFileSync(path, '');
+  return replayed;
+}
+
+export async function emitAndAck(
+  source: { ack: (ids: string[]) => Promise<void> },
+  messages: Message[],
+  json: boolean
+): Promise<void> {
+  const delivered: string[] = [];
+  for (const message of messages) {
+    try {
+      console.log(formatInbound(message, json));
+      persistWake(message);
+      delivered.push(message.id);
+    } catch (err) {
+      logError(`failed to emit ${message.id}: ${errorMessage(err)}`);
+      // Do not ack undelivered messages — leave them queued for the next cycle.
+      break;
+    }
+  }
+  if (delivered.length === 0) return;
+  try {
+    await source.ack(delivered);
   } catch (err) {
     logError(`ack failed: ${errorMessage(err)}`);
   }
@@ -255,6 +320,7 @@ async function main(): Promise<void> {
   const timing = loadTimingConfig();
   const source = await startSource(flags);
   console.log(`${READY_SENTINEL} agent=${source.agentName} mode=${flags.command ? 'wrapper' : 'in-process'}`);
+  replayPendingWakes(flags.json);
 
   let stopping = false;
   const shutdown = () => {

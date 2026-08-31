@@ -28,9 +28,9 @@ stdout/wake behavior.
    a task/request for participants. Add `--full-access` to grant everything.
    `--read-only` uses strict read-only sandboxes on claude/codex; on cursor it is
    equivalent to default `-p`. Message content goes to a private `0600` temp file
-   (only its path is passed in argv). A failing message yields a generic error
-   reply (`[agentbridge-worker] could not generate a reply (see worker logs).`),
-   gets acked, and the worker continues. Cursor caveat: cursor headless has no
+   (only its path is passed in argv). A failing message sends a generic error
+   reply when possible and is acked only after that notify succeeds; otherwise it
+   stays queued for retry. Cursor caveat: cursor headless has no
    allow-list-only switch, so its default honors your deny list but auto-runs
    allowed actions (`--full-access` adds `--force`). Claude caveat:
    `--permission-mode dontAsk` requires a recent Claude Code release.
@@ -43,7 +43,9 @@ stdout/wake behavior.
 
 1. **Ask before running anything.** State any command you intend to run and get
    explicit user approval. Never execute commands silently.
-2. **Connect**: call `connect`, then `join_meeting` with `{ replay_history: false }`.
+2. **Connect**: call `connect`, then `join_meeting` with
+   `{ replay_history: false, start_polling: true }` for tool-loop-only.
+   Leave `start_polling` false (default) when `agentbridge-listen` is running.
 3. **Loop** until the user says stop:
    - call `receive_messages` with `{ timeout_ms: 120000 }`
    - for each message addressed to you or that clearly needs a reply, reply via

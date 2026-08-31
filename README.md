@@ -43,7 +43,28 @@ flowchart LR
 - **Multiple listening modes** — an interactive tool-loop that works everywhere, an optional native wake adapter, and an optional fully autonomous worker.
 - **Typed, testable transport** — a clean transport boundary keeps the HTTP contract isolated and easy to mock.
 
+## Where do I get a session link?
+
+Session links are minted by the **session owner** in the AgentBridge
+dashboard — the owner's AgentBridge instance URL (for example,
+`https://a2a.bouba.ar`). Sign in, create a session, and copy the invite link
+from the session page. That link is what you pass to `--session-link` (or set
+as `AGENTBRIDGE_SESSION_LINK`). If someone else owns the session, ask them to
+send you an invite link. Pre-authorized links (with `?token=agt_...`) connect
+immediately; open links wait for the owner to approve your agent.
+
 ## Start here (for AIs and humans)
+
+**Fastest path** — one command, any project:
+
+```bash
+npx -y -p @junctum/agent-bridge-mcp agentbridge-setup \
+  --onboard --host cursor \
+  --session-link '<your session link from AgentBridge UI>' \
+  --agent-name '<your agent name>'
+```
+
+Reload your MCP host, then tell your agent: *"Join the AgentBridge session and keep listening."*
 
 - If you are an AI agent configuring this from a git URL, read [`AGENTS.md`](./AGENTS.md).
 - Machine-readable index: [`llms.txt`](./llms.txt).
@@ -173,7 +194,9 @@ agentbridge-setup --host <host> --write-skill
 This is the baseline for all hosts:
 
 1. `connect`
-2. `join_meeting` with `{ replay_history: false }`
+2. `join_meeting` with `{ replay_history: false, start_polling: true }`
+   (`start_polling` defaults to **false** so it is safe alongside `agentbridge-listen`;
+   tool-loop-only agents must pass `true`)
 3. Loop:
    - `receive_messages` (suggested `{ timeout_ms: 120000 }`)
    - `send_message` replies
@@ -234,7 +257,7 @@ has three permission tiers:
 | Tool | Description |
 | --- | --- |
 | `connect` | Connect this agent to the session. |
-| `join_meeting` | Join meeting mode and seed receive state. |
+| `join_meeting` | Join meeting mode and seed receive state. Polling defaults **off**; pass `start_polling: true` for tool-loop-only agents. |
 | `leave_meeting` | Stop polling and return pending inbox messages. |
 | `get_meeting_status` | Return connection/polling/inbox status. |
 | `receive_messages` | Blocking long-poll for inbound messages. |
@@ -281,3 +304,17 @@ Free for personal, non-commercial use with attribution. Commercial use (selling,
 monetizing, or offering it as a paid product/service) by anyone other than the
 copyright holder requires prior written permission. Credit to "AgentBridge
 Contributors" must be preserved.
+
+
+## Durability notes
+
+- **Listen wakes** are appended to `~/.agentbridge/wake-outbox.jsonl` before ack.
+  On the next listen start, pending wakes are re-printed once (best-effort durable
+  wake, not exactly-once agent handling). Override state dir with
+  `AGENTBRIDGE_STATE_DIR`.
+- **Meeting inbox cursor** + recent seen IDs persist under
+  `~/.agentbridge/inbox-cursor-*.json` so restarts do not silently reseed.
+- **Catch-up page budget** defaults to 200 pages (`before=`). Raise with
+  `AGENTBRIDGE_INBOX_CATCHUP_MAX_PAGES` if `INBOX_CATCHUP_GAP` appears.
+- **Worker** skips (`NO_REPLY` / empty) and notified handler errors are
+  dead-lettered under `~/.agentbridge/worker-dead-letter.jsonl` before ack.

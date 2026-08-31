@@ -1,4 +1,8 @@
-import type { KnockEvent } from './knock-poller.js';
+/** Signal emitted when the session may have new inbound messages. */
+export interface KnockEvent {
+  hasMessages: boolean;
+  checkedAt: string; // ISO-8601
+}
 
 export interface AgentBridgeSession {
   baseUrl: string;
@@ -7,7 +11,17 @@ export interface AgentBridgeSession {
   /** @deprecated use slug */
   sessionId: string;
   agentName: string;
+  /**
+   * Bearer used for API calls. After a successful connect this is typically the
+   * short-lived agent JWT (`access_token`). The original session-link `agt_`
+   * token is preserved in `linkToken` for 401 re-auth.
+   */
   token?: string;
+  /**
+   * Original session-link bearer (`agt_…`) from AGENTBRIDGE_SESSION_LINK.
+   * Preserved across connect so expired JWTs can be refreshed without restart.
+   */
+  linkToken?: string;
 }
 
 export type AgentStatus = 'pending' | 'active' | 'paused' | 'denied' | 'revoked';
@@ -102,17 +116,48 @@ export class AgentBridgeApiError extends Error {
   }
 }
 
+/**
+ * Wrap a raw fetch failure (DNS, refused connection, TLS, timeout) in a
+ * user-actionable error instead of surfacing "TypeError: fetch failed".
+ * The original error is preserved as `cause` for diagnostics.
+ */
+export function relayUnreachableError(url: string, cause: unknown): AgentBridgeApiError {
+  let host = url;
+  try {
+    host = new URL(url).host;
+  } catch {
+    // Keep the raw URL when it cannot be parsed; the hint still helps.
+  }
+  const error = new AgentBridgeApiError(
+    'RELAY_UNREACHABLE',
+    `could not reach ${host} — check the session link host and relay status`
+  );
+  error.cause = cause;
+  return error;
+}
+
+interface RequestOptions {
+  /** When false, a 401 is not followed by reconnect+retry (used by connect / retry). */
+  allowReauth?: boolean;
+}
+
 /** Live HTTP transport using the AgentBridge REST API contract. */
 export class HttpTransport implements Transport {
   async connect(session: AgentBridgeSession, input: ConnectInput = {}): Promise<ConnectResult> {
-    const result = await this.request<ConnectResult>(session, `sessions/${session.slug}/connect`, {
-      method: 'POST',
-      body: JSON.stringify({
-        agent_name: session.agentName,
-        name: session.agentName,
-        capabilities: input.capabilities ?? [],
-      }),
-    });
+    this.preserveLinkToken(session);
+    const result = await this.request<ConnectResult>(
+      session,
+      `sessions/${session.slug}/connect`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          agent_name: session.agentName,
+          name: session.agentName,
+          capabilities: input.capabilities ?? [],
+        }),
+      },
+      { allowReauth: false }
+    );
     this.captureReturnedToken(session, result);
     return result;
   }
@@ -147,7 +192,14 @@ export class HttpTransport implements Transport {
   }
 
   async getKnock(session: AgentBridgeSession, knockId: string): Promise<Record<string, unknown>> {
-    return this.request<Record<string, unknown>>(session, `sessions/${session.slug}/knocks/${knockId}`);
+    // Knock polling during approval uses whatever bearer we have; do not
+    // trigger a connect-loop on 401 here (open joins may have no token yet).
+    return this.request<Record<string, unknown>>(
+      session,
+      `sessions/${session.slug}/knocks/${knockId}`,
+      {},
+      { allowReauth: false }
+    );
   }
 
   onKnock(_fn: (event: KnockEvent) => void): void {
@@ -159,14 +211,77 @@ export class HttpTransport implements Transport {
     // no persistent HTTP resources
   }
 
-  private async request<T>(session: AgentBridgeSession, path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetch(`${session.apiBaseUrl}/${path}`, {
-      ...init,
-      headers: { ...this.headers(session), ...init.headers },
-    });
+  private async request<T>(
+    session: AgentBridgeSession,
+    path: string,
+    init: RequestInit = {},
+    options: RequestOptions = {}
+  ): Promise<T> {
+    const allowReauth = options.allowReauth !== false;
+    const url = `${session.apiBaseUrl}/${path}`;
+    const timeoutMs = Number(process.env.AGENTBRIDGE_FETCH_TIMEOUT_MS ?? 30_000);
+    const signal =
+      init.signal ??
+      (Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        ...init,
+        signal,
+        headers: { ...this.headers(session), ...init.headers },
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        throw new AgentBridgeApiError('POLL_TIMEOUT', `request to ${url} timed out after ${timeoutMs}ms`);
+      }
+      throw relayUnreachableError(url, err);
+    }
+
+    if (res.status === 401 && allowReauth) {
+      await this.reauthenticate(session);
+      return this.request(session, path, init, { allowReauth: false });
+    }
+
     if (!res.ok) await this.throwApiError(res);
     if (res.status === 204) return undefined as T;
     return res.json() as Promise<T>;
+  }
+
+  /**
+   * On expired agent JWT (401), reconnect using the original session link
+   * (`agt_` or open join) and capture the new access_token in memory.
+   */
+  private async reauthenticate(session: AgentBridgeSession): Promise<void> {
+    this.preserveLinkToken(session);
+    const linkToken = session.linkToken;
+    // Restore the pre-auth bearer when we have one; otherwise clear the JWT so
+    // open-join reconnects by agent name alone.
+    if (linkToken && linkToken.startsWith('agt_')) {
+      session.token = linkToken;
+    } else {
+      session.token = undefined;
+    }
+
+    let result: ConnectResult;
+    try {
+      result = await this.connect(session, { capabilities: [] });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new AgentBridgeApiError(
+        'REAUTH_FAILED',
+        `agent JWT expired and reconnect failed: ${detail}`,
+        401
+      );
+    }
+
+    if (result.status !== 'active') {
+      throw new AgentBridgeApiError(
+        'REAUTH_FAILED',
+        `agent JWT expired and reconnect returned status=${result.status}` +
+          (result.knock_id ? ` (knock ${result.knock_id})` : ''),
+        401
+      );
+    }
   }
 
   private headers(session: AgentBridgeSession): Record<string, string> {
@@ -177,7 +292,14 @@ export class HttpTransport implements Transport {
     };
   }
 
+  private preserveLinkToken(session: AgentBridgeSession): void {
+    if (!session.linkToken && session.token?.startsWith('agt_')) {
+      session.linkToken = session.token;
+    }
+  }
+
   private captureReturnedToken(session: AgentBridgeSession, result: ConnectResult): void {
+    this.preserveLinkToken(session);
     const token = result.access_token ?? result.agent_token ?? result.token;
     if (typeof token === 'string' && token.length > 0) session.token = token;
   }
@@ -190,12 +312,25 @@ export class HttpTransport implements Transport {
       body = undefined;
     }
     const maybe = body as { code?: unknown; message?: unknown; detail?: unknown; details?: unknown } | undefined;
-    const code = typeof maybe?.code === 'string' ? maybe.code : `HTTP_${res.status}`;
+    // FastAPI structured errors are `{ detail: { code, message } }`. Also accept
+    // a top-level `{ code, message }` (legacy mocks) and string/array `detail`.
+    const detailObj =
+      maybe?.detail && typeof maybe.detail === 'object' && !Array.isArray(maybe.detail)
+        ? (maybe.detail as { code?: unknown; message?: unknown })
+        : undefined;
+    const code =
+      (typeof detailObj?.code === 'string' && detailObj.code) ||
+      (typeof maybe?.code === 'string' && maybe.code) ||
+      `HTTP_${res.status}`;
     let detailMessage = res.statusText;
-    if (typeof maybe?.message === 'string') {
+    if (typeof detailObj?.message === 'string') {
+      detailMessage = detailObj.message;
+    } else if (typeof maybe?.message === 'string') {
       detailMessage = maybe.message;
     } else if (typeof maybe?.detail === 'string') {
       detailMessage = maybe.detail;
+    } else if (Array.isArray(maybe?.detail)) {
+      detailMessage = JSON.stringify(maybe.detail);
     }
     throw new AgentBridgeApiError(code, detailMessage, res.status, maybe?.details ?? maybe?.detail);
   }

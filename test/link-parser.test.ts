@@ -31,4 +31,21 @@ describe('link-parser', () => {
   it('throws on malformed URL', () => {
     expect(() => parseSessionLink('not-a-url')).toThrow();
   });
+
+  it('allows http://localhost for local relays', () => {
+    const result = parseSessionLink('http://localhost:8000/s/dev-session?token=agt_local');
+    expect(result.baseUrl).toBe('http://localhost:8000');
+    expect(result.apiBaseUrl).toBe('http://localhost:8000/api/v1');
+    expect(result.slug).toBe('dev-session');
+    expect(result.token).toBe('agt_local');
+  });
+
+  it('allows http://127.0.0.1', () => {
+    const result = parseSessionLink('http://127.0.0.1:8000/s/local');
+    expect(result.baseUrl).toBe('http://127.0.0.1:8000');
+  });
+
+  it('rejects http:// for non-localhost hosts', () => {
+    expect(() => parseSessionLink('http://relay.example.com/s/demo')).toThrow(/localhost/i);
+  });
 });

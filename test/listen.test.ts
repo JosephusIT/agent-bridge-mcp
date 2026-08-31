@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { formatInbound, INBOUND_SENTINEL, parseArgs } from '../src/listen.js';
+import { emitAndAck, formatInbound, INBOUND_SENTINEL, parseArgs } from '../src/listen.js';
 import type { Message } from '../src/transport.js';
 
 function message(overrides: Partial<Message> = {}): Message {
@@ -56,5 +59,39 @@ describe('formatInbound', () => {
     expect(line.startsWith(`${INBOUND_SENTINEL} `)).toBe(true);
     const payload = JSON.parse(line.slice(INBOUND_SENTINEL.length + 1));
     expect(payload).toMatchObject({ id: 'm1', type: 'text', from: 'agent:agent-2', content: 'hi' });
+  });
+});
+
+describe('emitAndAck', () => {
+  beforeEach(() => {
+    process.env.AGENTBRIDGE_STATE_DIR = mkdtempSync(join(tmpdir(), 'ab-listen-'));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('acks only messages that were successfully printed', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const ack = vi.fn(async () => undefined);
+    const messages = [message({ id: 'a' }), message({ id: 'b' })];
+
+    await emitAndAck({ ack }, messages, false);
+
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(ack).toHaveBeenCalledWith(['a', 'b']);
+  });
+
+  it('does not ack remaining messages when emit throws mid-batch', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      if (String(line).includes('id=b')) throw new Error('stdout broken');
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const ack = vi.fn(async () => undefined);
+
+    await emitAndAck({ ack }, [message({ id: 'a' }), message({ id: 'b' }), message({ id: 'c' })], false);
+
+    expect(log).toHaveBeenCalled();
+    expect(ack).toHaveBeenCalledWith(['a']);
   });
 });

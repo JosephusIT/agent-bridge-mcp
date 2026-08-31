@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMeetingInboxOptions, MeetingInbox } from '../src/meeting-inbox.js';
 import type {
@@ -43,6 +46,10 @@ function message(id: string, createdAt: string, overrides: Partial<Message> = {}
 class FakeTransport implements Transport {
   messages: Message[] = [];
   getMessagesError: Error | null = null;
+  /** Recorded getMessages calls for pagination assertions. */
+  getMessagesCalls: Array<{ limit?: number; before?: string }> = [];
+  /** When set, pages newest-first windows of this size (simulates API limit). */
+  pageSize: number | null = null;
   closed = false;
 
   async connect(_session: AgentBridgeSession, _input?: ConnectInput): Promise<ConnectResult> {
@@ -61,9 +68,27 @@ class FakeTransport implements Transport {
     return sent;
   }
 
-  async getMessages(): Promise<Message[]> {
+  async getMessages(
+    _session: AgentBridgeSession,
+    input: { limit?: number; before?: string; include_direct?: boolean } = {}
+  ): Promise<Message[]> {
     if (this.getMessagesError) throw this.getMessagesError;
-    return [...this.messages];
+    this.getMessagesCalls.push({ limit: input.limit, before: input.before });
+    const newestFirst = [...this.messages].sort(
+      (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id.localeCompare(a.id)
+    );
+    let filtered = newestFirst;
+    if (input.before) {
+      const marker = this.messages.find((m) => m.id === input.before);
+      if (marker) {
+        const markerTime = Date.parse(marker.created_at);
+        filtered = newestFirst.filter((m) => Date.parse(m.created_at) < markerTime);
+      }
+    }
+    const limit = input.limit ?? filtered.length;
+    const page = filtered.slice(0, this.pageSize ?? limit);
+    // API returns ascending within the page.
+    return [...page].reverse();
   }
 
   async listAgents(): Promise<Agent[]> {
@@ -85,6 +110,8 @@ class FakeTransport implements Transport {
   }
 }
 
+let testStateDir: string;
+
 function createInbox(transport: FakeTransport, overrides: Parameters<typeof createMeetingInboxOptions>[0] = {}) {
   let now = Date.parse('2026-06-20T12:00:00.000Z');
   const sleep = vi.fn(async (ms: number) => {
@@ -101,6 +128,7 @@ function createInbox(transport: FakeTransport, overrides: Parameters<typeof crea
       defaultReceiveTimeoutMs: 50,
       now: () => now,
       sleep,
+      stateDir: testStateDir,
       ...overrides,
     })
   );
@@ -109,6 +137,14 @@ function createInbox(transport: FakeTransport, overrides: Parameters<typeof crea
 }
 
 describe('MeetingInbox', () => {
+  beforeEach(() => {
+    testStateDir = mkdtempSync(join(tmpdir(), 'ab-inbox-'));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('seeds without replaying old messages by default', async () => {
     const transport = new FakeTransport();
     transport.messages = [message('old-1', '2026-06-20T12:00:00.000Z')];
@@ -223,6 +259,66 @@ describe('MeetingInbox', () => {
     expect(inbox.status().connected).toBe(true);
   });
 
+  it('join does not start background polling by default', async () => {
+    const transport = new FakeTransport();
+    const { inbox } = createInbox(transport);
+
+    await inbox.join();
+
+    expect(inbox.status().polling).toBe(false);
+    inbox.startPolling();
+    expect(inbox.status().polling).toBe(true);
+    inbox.stopPolling();
+  });
+
+  it('paginates with before to catch up past a single page', async () => {
+    const transport = new FakeTransport();
+    // Cap page size at 2 via inboxMaxMessages so catch-up must walk before=.
+    transport.messages = [message('seed', '2026-06-20T12:00:00.000Z')];
+    const { inbox } = createInbox(transport, { inboxMaxMessages: 2 });
+    await inbox.join({ startPolling: false });
+
+    transport.messages = [
+      message('seed', '2026-06-20T12:00:00.000Z'),
+      message('m1', '2026-06-20T12:00:01.000Z'),
+      message('m2', '2026-06-20T12:00:02.000Z'),
+      message('m3', '2026-06-20T12:00:03.000Z'),
+      message('m4', '2026-06-20T12:00:04.000Z'),
+      message('m5', '2026-06-20T12:00:05.000Z'),
+    ];
+    transport.getMessagesCalls = [];
+
+    const result = await inbox.pollOnce();
+
+    expect(transport.getMessagesCalls.length).toBeGreaterThan(1);
+    expect(transport.getMessagesCalls.some((c) => c.before)).toBe(true);
+    // Cap is 2, so only the newest two stay queued — but all five must have been seen
+    // via multi-page fetch (otherwise m3 would never enter before overflow).
+    expect(transport.getMessagesCalls.length).toBeGreaterThanOrEqual(3);
+    expect(result.messages.map((item) => item.id)).toEqual(['m4', 'm5']);
+    expect(inbox.status().lastError).toEqual(expect.stringMatching(/INBOX_OVERFLOW/));
+  });
+
+  it('surfaces INBOX_OVERFLOW and rewinds so dropped messages can be retried', async () => {
+    const transport = new FakeTransport();
+    const { inbox } = createInbox(transport, { inboxMaxMessages: 2 });
+    await inbox.join({ startPolling: false });
+
+    transport.messages = [
+      message('a', '2026-06-20T12:00:01.000Z'),
+      message('b', '2026-06-20T12:00:02.000Z'),
+      message('c', '2026-06-20T12:00:03.000Z'),
+    ];
+
+    const first = await inbox.pollOnce();
+    expect(first.messages.map((m) => m.id)).toEqual(['b', 'c']);
+    expect(inbox.status().lastError).toEqual(expect.stringMatching(/INBOX_OVERFLOW/));
+
+    // Dropped `a` should be re-fetched on the next poll (cursor rewound; seenIds cleared).
+    const second = await inbox.pollOnce();
+    expect(second.messages.map((m) => m.id)).toContain('a');
+  });
+
   it('rejects concurrent blocking receives predictably', async () => {
     const transport = new FakeTransport();
     let now = Date.parse('2026-06-20T12:00:00.000Z');
@@ -235,6 +331,7 @@ describe('MeetingInbox', () => {
         pollIntervalMs: 10,
         inboxMaxMessages: 50,
         defaultReceiveTimeoutMs: 50,
+        stateDir: testStateDir,
         now: () => now,
         sleep: (ms: number) =>
           new Promise<void>((resolve) => {

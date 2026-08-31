@@ -38,14 +38,24 @@ export function resolveTargetPath(
   return resolved;
 }
 
+function jsonAgentbridgeServer(snippet: HostConfigSnippet): Record<string, unknown> {
+  const server: Record<string, unknown> = {
+    command: snippet.command,
+    args: snippet.args,
+  };
+  if (snippet.envFile) {
+    server.envFile = snippet.envFile;
+  }
+  if (snippet.env && Object.keys(snippet.env).length > 0) {
+    server.env = snippet.env;
+  }
+  return server;
+}
+
 function jsonConfigPayload(snippet: HostConfigSnippet): Record<string, unknown> {
   return {
     mcpServers: {
-      agentbridge: {
-        command: snippet.command,
-        args: snippet.args,
-        env: snippet.env,
-      },
+      agentbridge: jsonAgentbridgeServer(snippet),
     },
   };
 }
@@ -63,11 +73,7 @@ export function mergeJsonConfig(existingText: string | null, snippet: HostConfig
   const root = parsed && typeof parsed === 'object' ? parsed : {};
   const mcpServers =
     root.mcpServers && typeof root.mcpServers === 'object' ? (root.mcpServers as Record<string, unknown>) : {};
-  mcpServers.agentbridge = {
-    command: snippet.command,
-    args: snippet.args,
-    env: snippet.env,
-  };
+  mcpServers.agentbridge = jsonAgentbridgeServer(snippet);
   root.mcpServers = mcpServers;
   return `${JSON.stringify(root, null, 2)}\n`;
 }
@@ -79,19 +85,23 @@ function tomlValue(value: string): string {
 
 export function renderTomlAgentbridgeBlock(snippet: HostConfigSnippet): string {
   const argList = snippet.args.map(tomlValue).join(', ');
-  const envLines = Object.entries(snippet.env)
-    .map(([key, value]) => `${key} = ${tomlValue(value)}`)
-    .join('\n');
+  const envLines =
+    snippet.env && Object.keys(snippet.env).length > 0
+      ? Object.entries(snippet.env)
+          .map(([key, value]) => `${key} = ${tomlValue(value)}`)
+          .join('\n')
+      : '';
 
-  return [
+  const lines = [
     '[mcp_servers.agentbridge]',
     `command = ${tomlValue(snippet.command)}`,
     `args = [${argList}]`,
-    '',
-    '[mcp_servers.agentbridge.env]',
-    envLines,
-    '',
-  ].join('\n');
+  ];
+  if (envLines) {
+    lines.push('', '[mcp_servers.agentbridge.env]', envLines);
+  }
+  lines.push('');
+  return lines.join('\n');
 }
 
 function isAgentbridgeTableName(name: string): boolean {

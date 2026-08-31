@@ -3,12 +3,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import {
+  hostMcpSnippetForProfile,
   hostProfile,
   LISTENING_SKILL,
   ONBOARDING_PROMPT,
   setupGuideForHost,
   SETUP_GUIDE,
   supportedHosts,
+  listeningSkillForHost,
 } from '../src/guide.js';
 
 describe('guide content', () => {
@@ -20,6 +22,17 @@ describe('guide content', () => {
     expect(ONBOARDING_PROMPT).toContain('receive_messages');
     expect(ONBOARDING_PROMPT).toContain('ack AFTER handling');
     expect(LISTENING_SKILL).toContain('ack after handling');
+  });
+
+  it('uses cursor chat-wake skill for cursor host', () => {
+    expect(listeningSkillForHost('cursor')).toContain('chat-wake');
+    expect(listeningSkillForHost('cursor')).not.toEqual(LISTENING_SKILL);
+  });
+
+  it('cursor MCP snippet uses envFile instead of inline secrets', () => {
+    const snippet = hostMcpSnippetForProfile(hostProfile('cursor'), 'https://x', 'bot');
+    expect(snippet.envFile).toContain('.agentbridge/secrets.env');
+    expect(snippet.env).toBeUndefined();
   });
 
   it('keeps AGENTS.md onboarding prompt in sync', () => {

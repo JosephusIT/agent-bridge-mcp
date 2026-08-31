@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildHeadlessCommand, decideDispatch, handleMessage, parseWorkerArgs, startupWarnings, workerPrompt } from '../src/worker.js';
 import type { AgentBridgeSession, Message, SendMessageInput } from '../src/transport.js';
@@ -12,6 +15,14 @@ const baseMessage: Message = {
 };
 
 const session = { agentName: 'bot' } as AgentBridgeSession;
+
+beforeEach(() => {
+  process.env.AGENTBRIDGE_STATE_DIR = mkdtempSync(join(tmpdir(), 'ab-worker-'));
+});
+
+afterEach(() => {
+  delete process.env.AGENTBRIDGE_STATE_DIR;
+});
 
 describe('parseWorkerArgs', () => {
   it('parses valid host and flags with default existing mode', () => {
@@ -133,6 +144,33 @@ describe('handleMessage', () => {
     expect(sent.content).toContain('could not generate a reply');
     expect(sent.content).not.toContain('cli boom on stderr');
     expect(ack).toHaveBeenCalledWith({ messageIds: ['m1'] });
+  });
+
+  it('does not ack when the runner throws and the error reply also fails', async () => {
+    const sendMessage = vi.fn<[AgentBridgeSession, SendMessageInput], Promise<Message>>().mockRejectedValue(new Error('relay down'));
+    const ack = vi.fn();
+    const runner = vi.fn().mockRejectedValue(new Error('cli boom'));
+
+    await handleMessage(baseMessage, flags, session, { sendMessage, ack }, runner, {
+      conditional: false,
+      selfName: 'bot',
+    });
+
+    expect(ack).not.toHaveBeenCalled();
+  });
+
+  it('does not ack when send of a successful reply fails', async () => {
+    const sendMessage = vi.fn<[AgentBridgeSession, SendMessageInput], Promise<Message>>().mockRejectedValue(new Error('send failed'));
+    const ack = vi.fn();
+    const runner = vi.fn().mockResolvedValue('the reply');
+
+    await handleMessage(baseMessage, flags, session, { sendMessage, ack }, runner, {
+      conditional: false,
+      selfName: 'bot',
+    });
+
+    // First send (reply) fails → catch tries error notify. That also uses sendMessage and fails → no ack.
+    expect(ack).not.toHaveBeenCalled();
   });
 
   it('uses a dry-run reply without invoking the runner', async () => {

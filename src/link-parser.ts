@@ -13,12 +13,53 @@ export interface ParsedLink {
 const SLUG_RE = /^[A-Za-z0-9-]{2,100}$/;
 const TOKEN_RE = /^agt_[A-Za-z0-9_-]+$/;
 
+
+/** Block session-link hosts that resolve to private/link-local/metadata ranges.
+ * Localhost is allowed for local-dev only. */
+function isBlockedNonLocalHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return false;
+  // IPv4 private / link-local / metadata
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    if (a === 10) return true;
+    if (a === 127) return true;
+    if (a === 0) return true;
+    if (a === 169 && b === 254) return true; // link-local + cloud metadata 169.254.169.254
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  }
+  // IPv6 unique-local / link-local
+  if (host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80')) return true;
+  // Common metadata hostnames
+  if (host === 'metadata.google.internal' || host.endsWith('.internal')) return true;
+  return false;
+}
+
 export function parseSessionLink(raw: string): ParsedLink {
   const url = raw.startsWith('agentbridge://') ? raw.replace(/^agentbridge:/, 'https:') : raw;
   const parsed = new URL(url);
 
-  if (parsed.protocol !== 'https:') {
-    throw new Error('Invalid AgentBridge session link: server-url must use https://');
+  const host = parsed.hostname.toLowerCase();
+  const isLocal =
+    host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+  if (parsed.protocol === 'http:') {
+    if (!isLocal) {
+      throw new Error(
+        'Invalid AgentBridge session link: http:// is only allowed for localhost (use https:// for remote relays)'
+      );
+    }
+  } else if (parsed.protocol !== 'https:') {
+    throw new Error('Invalid AgentBridge session link: server-url must use https:// (or http://localhost)');
+  }
+
+  if (isBlockedNonLocalHost(host)) {
+    throw new Error(
+      `Invalid AgentBridge session link: host "${host}" is a private/link-local/metadata address; ` +
+        'only localhost is allowed for non-public relays (SSRF protection)'
+    );
   }
 
   const pathParts = parsed.pathname.replace(/^\/+/, '').split('/').filter(Boolean);
