@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { applySecretsFile, loadAgentbridgeSecretsFile } from '../src/env-file.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { applySecretsFile, CURSOR_SECRETS_ENV_REL, loadAgentbridgeSecretsFile } from '../src/env-file.js';
 import { loadSessionFromEnv } from '../src/config.js';
 
 describe('applySecretsFile', () => {
@@ -30,6 +34,61 @@ describe('loadAgentbridgeSecretsFile', () => {
     process.env.AGENTBRIDGE_SESSION_LINK = 'https://already';
     expect(loadAgentbridgeSecretsFile('/tmp')).toBe(false);
     delete process.env.AGENTBRIDGE_SESSION_LINK;
+  });
+
+  it('documents the production cursor fallback path', () => {
+    expect(CURSOR_SECRETS_ENV_REL).toBe('.cursor/secrets.env');
+  });
+});
+
+// Use a sandbox-safe stand-in for `.cursor/secrets.env` (some environments
+// refuse mkdir of a literal `.cursor` directory). Production still resolves
+// CURSOR_SECRETS_ENV_REL via the default fallbackRels argument.
+const CURSOR_FALLBACK = '.cursor-dot/secrets.env';
+
+describe('loadAgentbridgeSecretsFile fallback to .cursor/secrets.env', () => {
+  let cwd: string;
+  let priorLink: string | undefined;
+
+  beforeEach(() => {
+    cwd = mkdtempSync(join(tmpdir(), 'agentbridge-env-'));
+    priorLink = process.env.AGENTBRIDGE_SESSION_LINK;
+    delete process.env.AGENTBRIDGE_SESSION_LINK;
+  });
+
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+    if (priorLink === undefined) delete process.env.AGENTBRIDGE_SESSION_LINK;
+    else process.env.AGENTBRIDGE_SESSION_LINK = priorLink;
+  });
+
+  it('loads .cursor/secrets.env when .agentbridge/secrets.env is absent', () => {
+    mkdirSync(join(cwd, '.cursor-dot'));
+    writeFileSync(join(cwd, CURSOR_FALLBACK), 'AGENTBRIDGE_SESSION_LINK=https://cursor/s/x?token=agt_c\n');
+    expect(loadAgentbridgeSecretsFile(cwd, [CURSOR_FALLBACK])).toBe(true);
+    expect(process.env.AGENTBRIDGE_SESSION_LINK).toBe('https://cursor/s/x?token=agt_c');
+  });
+
+  it('falls back to .cursor/secrets.env when .agentbridge/secrets.env lacks the link', () => {
+    mkdirSync(join(cwd, '.agentbridge'));
+    writeFileSync(join(cwd, '.agentbridge/secrets.env'), 'OTHER_KEY=1\n');
+    mkdirSync(join(cwd, '.cursor-dot'));
+    writeFileSync(join(cwd, CURSOR_FALLBACK), 'AGENTBRIDGE_SESSION_LINK=https://cursor/s/x?token=agt_c\n');
+    expect(loadAgentbridgeSecretsFile(cwd, [CURSOR_FALLBACK])).toBe(true);
+    expect(process.env.AGENTBRIDGE_SESSION_LINK).toBe('https://cursor/s/x?token=agt_c');
+  });
+
+  it('prefers .agentbridge/secrets.env when it defines the link', () => {
+    mkdirSync(join(cwd, '.agentbridge'));
+    writeFileSync(join(cwd, '.agentbridge/secrets.env'), 'AGENTBRIDGE_SESSION_LINK=https://agentbridge/s/x?token=agt_a\n');
+    mkdirSync(join(cwd, '.cursor-dot'));
+    writeFileSync(join(cwd, CURSOR_FALLBACK), 'AGENTBRIDGE_SESSION_LINK=https://cursor/s/x?token=agt_c\n');
+    expect(loadAgentbridgeSecretsFile(cwd, [CURSOR_FALLBACK])).toBe(true);
+    expect(process.env.AGENTBRIDGE_SESSION_LINK).toBe('https://agentbridge/s/x?token=agt_a');
+  });
+
+  it('returns false when neither file exists', () => {
+    expect(loadAgentbridgeSecretsFile(cwd, [CURSOR_FALLBACK])).toBe(false);
   });
 });
 

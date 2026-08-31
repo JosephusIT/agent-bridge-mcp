@@ -7,6 +7,7 @@
  *                     [--onboard] [--session-link <url>] [--agent-name <name>]
  *                     [--skill] [--write-skill [path]]
  *                     [--print-config] [--install] [--config-path <path>]
+ *                     [--doctor]
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -29,6 +30,7 @@ import {
   setupGuideForHost,
   supportedHosts,
 } from './guide.js';
+import { runDoctor } from './doctor.js';
 import { installHostConfig, mergeJsonConfig, renderTomlAgentbridgeBlock, resolveTargetPath } from './setup-config.js';
 
 function getFlagValue(argv: string[], flag: string): string | undefined {
@@ -178,9 +180,15 @@ function printDefaultGuide(host: string): void {
   console.log(ONBOARDING_PROMPT);
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const host = getFlagValue(argv, '--host') || 'generic';
+
+  if (argv.includes('--doctor')) {
+    process.exitCode = await runDoctor(host);
+    return;
+  }
+
   const skillOnly = argv.includes('--skill');
   const wantsWriteSkill = argv.includes('--write-skill') || argv.includes('--write');
   const wantsPrintConfig = argv.includes('--print-config');
@@ -221,4 +229,4 @@ function main(): void {
   printDefaultGuide(host);
 }
 
-main();
+await main();

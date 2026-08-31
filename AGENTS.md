@@ -79,7 +79,8 @@ Start listener:
 
 ## Universal fallback (every host) — tool-loop
 
-1) `connect`, then `join_meeting` with { replay_history: false }
+1) `connect`, then `join_meeting` with { replay_history: false, start_polling: true }
+   (start_polling defaults false — required true for tool-loop-only; leave false when using agentbridge-listen)
 2) Loop: `receive_messages` { timeout_ms: 120000 } → `send_message` → `ack_messages` (ack AFTER handling)
 3) Ignore your own echoes; immediately start the next `receive_messages`
 

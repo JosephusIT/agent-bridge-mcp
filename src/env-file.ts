@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 
 export const AGENTBRIDGE_DIR = '.agentbridge';
 export const SECRETS_ENV_REL = `${AGENTBRIDGE_DIR}/secrets.env`;
+/** Fallback location: Cursor users often keep project secrets here already. */
+export const CURSOR_SECRETS_ENV_REL = '.cursor/secrets.env';
 export const SECRETS_ENV_EXAMPLE_REL = `${AGENTBRIDGE_DIR}/secrets.env.example`;
 export const AGENTBRIDGE_GITIGNORE_REL = `${AGENTBRIDGE_DIR}/.gitignore`;
 
@@ -43,11 +45,24 @@ export function applySecretsFile(text: string): number {
   return applied;
 }
 
-/** Load `.agentbridge/secrets.env` from cwd if AGENTBRIDGE_SESSION_LINK is unset. */
-export function loadAgentbridgeSecretsFile(cwd = process.cwd()): boolean {
+/**
+ * Load secrets from cwd if AGENTBRIDGE_SESSION_LINK is unset.
+ * Tries `.agentbridge/secrets.env` first, then falls back to
+ * `.cursor/secrets.env` when the former does not define the session link.
+ *
+ * `fallbackRels` overrides the default cursor fallback (useful in sandboxes
+ * that block creating a literal `.cursor/` directory).
+ */
+export function loadAgentbridgeSecretsFile(
+  cwd = process.cwd(),
+  fallbackRels: string[] = [CURSOR_SECRETS_ENV_REL]
+): boolean {
   if (process.env.AGENTBRIDGE_SESSION_LINK) return false;
-  const path = resolve(cwd, SECRETS_ENV_REL);
-  if (!existsSync(path)) return false;
-  applySecretsFile(readFileSync(path, 'utf8'));
+  for (const rel of [SECRETS_ENV_REL, ...fallbackRels]) {
+    const path = resolve(cwd, rel);
+    if (!existsSync(path)) continue;
+    applySecretsFile(readFileSync(path, 'utf8'));
+    if (process.env.AGENTBRIDGE_SESSION_LINK) return true;
+  }
   return Boolean(process.env.AGENTBRIDGE_SESSION_LINK);
 }

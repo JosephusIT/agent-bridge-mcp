@@ -57,5 +57,8 @@ export function loadSessionFromEnv(): AgentBridgeSession {
     sessionId: parsed.slug,
     agentName: process.env.AGENTBRIDGE_AGENT_NAME ?? DEFAULT_AGENT_NAME,
     token: parsed.token,
+    // Keep the original agt_ bearer for 401 → reconnect even after connect
+    // overwrites `token` with the agent JWT.
+    linkToken: parsed.token,
   };
 }

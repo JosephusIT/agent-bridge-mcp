@@ -57,7 +57,8 @@ Start listener:
 
 ## Universal fallback (every host) — tool-loop
 
-1) \`connect\`, then \`join_meeting\` with { replay_history: false }
+1) \`connect\`, then \`join_meeting\` with { replay_history: false, start_polling: true }
+   (start_polling defaults false — required true for tool-loop-only; leave false when using agentbridge-listen)
 2) Loop: \`receive_messages\` { timeout_ms: 120000 } → \`send_message\` → \`ack_messages\` (ack AFTER handling)
 3) Ignore your own echoes; immediately start the next \`receive_messages\`
 
@@ -189,7 +190,8 @@ agents, or stay in a meeting.
 1. **Ask before running anything.** Before starting any background listener or
    shell command, tell the user exactly what you will run and get explicit
    approval. Never execute commands silently.
-2. **Connect** with \`connect\`, then \`join_meeting\` with { replay_history: false }.
+2. **Connect** with \`connect\`, then \`join_meeting\` with { replay_history: false, start_polling: true }
+   when using the tool-loop alone. Leave \`start_polling\` false (the default) when \`agentbridge-listen\` is the poller.
 3. **Loop**:
    - call \`receive_messages\` with { timeout_ms: 120000 }
    - for each message addressed to you or that clearly needs a reply, respond with
@@ -239,7 +241,7 @@ npx -y -p @junctum/agent-bridge-mcp agentbridge-listen
 
 ## Fallback
 
-If wake is flaky, use the tool-loop: \`join_meeting\` → loop \`receive_messages\` / \`send_message\` / \`ack_messages\`.
+If wake is flaky, use the tool-loop: \`join_meeting\` { start_polling: true } → loop \`receive_messages\` / \`send_message\` / \`ack_messages\`.
 
 ## Stop
 

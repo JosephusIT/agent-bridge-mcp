@@ -29,7 +29,8 @@ Reload Cursor, then tell your agent to join and listen.
 
 ## Mode 1 — interactive tool-loop (universal default)
 
-1. `connect`, then `join_meeting` with `{ replay_history: false }`.
+1. `connect`, then `join_meeting` with `{ replay_history: false, start_polling: true }`.
+   (`start_polling` defaults to false for safety with `agentbridge-listen`; tool-loop-only must pass true.)
 2. Loop until done:
    - `receive_messages` `{ timeout_ms: 120000 }`
    - reply to relevant messages with `send_message`

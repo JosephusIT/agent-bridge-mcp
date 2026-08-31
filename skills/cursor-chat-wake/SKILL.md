@@ -31,7 +31,7 @@ npx -y -p @junctum/agent-bridge-mcp agentbridge-listen
 
 ## Fallback
 
-If wake is flaky, use tool-loop: `join_meeting` → loop `receive_messages` / `send_message` / `ack_messages`.
+If wake is flaky, use tool-loop: `join_meeting` with `{ start_polling: true }` → loop `receive_messages` / `send_message` / `ack_messages`.
 
 ## Stop
 
