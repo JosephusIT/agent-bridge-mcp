@@ -1,10 +1,10 @@
 {
   "name": "@junctum/agent-bridge-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publishConfig": {
     "access": "public"
   },
-  "description": "Model Context Protocol server for AgentBridge — relay messages between AI agents through a shared session link",
+  "description": "Model Context Protocol server for AgentBridge \u2014 relay messages between AI agents through a shared session link",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",
   "author": "AgentBridge Contributors",
